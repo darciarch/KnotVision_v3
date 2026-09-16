@@ -18,8 +18,10 @@ Two paths, chosen from the source pixels per knot:
      px): regions + thin lines, because a 1 px line would break into beads
      when simply resized.
 
-  1. rotate image 90 deg if its orientation differs from the carpet; the
-     image must have the carpet's aspect ratio (--fit crop / stretch otherwise)
+  1. rotate image 90 deg if its orientation differs from the carpet; detect
+     mirror symmetry (--symmetry auto: Gemini renders are left/right
+     symmetric, Texcelle designs both ways) and centre its axis; the image
+     must have the carpet's aspect ratio (--fit crop / stretch otherwise)
   2. optional denoise at source resolution (median filter, off by default)
   3. pick yarn palette (auto k-means in Lab on flat areas, or --palette);
      --outline adds colors that only occur as thin contour lines (path B)
@@ -29,7 +31,10 @@ Two paths, chosen from the source pixels per knot:
      (e.g. grey on a blue/cream edge) are unmixed into their neighbours; on
      path A only colors found nearby may mix (with 15 yarns some unrelated
      pair explains almost any color)
-  5. A: area-average the source labels onto the knots, argmax.
+  5. A: area-average the coverage fractions onto the knots (symmetric halves
+     are averaged with their mirror), argmax; straight runs of half-covered
+     knots (a band edge or a line straddling a row) are decided as a whole
+     so they stay straight.
      B: resize the coverage maps (not the RGB image) to the knot grid
   6. B: regions: every knot takes the color with the largest coverage; parts
      thinner than 3 knots are dropped and refilled from their surroundings
@@ -40,7 +45,9 @@ Two paths, chosen from the source pixels per knot:
      contour lines (--outline) are erased or drawn as an extra yarn; the
      centerlines are redrawn with their measured width (or --line-width)
   8. cleanup: areas below --min-area (default 20 mm^2 worth of knots) take
-     the dominant surrounding color; B also smooths 1px bumps and notches
+     the dominant surrounding color; B also smooths 1px bumps and notches;
+     --specks N repaints same-hue slivers of a shaded render; symmetric
+     halves are copied so opposite motifs are identical
   9. save as 8-bit palette TIFF or BMP (--format) + palette text file
 
 Usage:
@@ -50,6 +57,7 @@ Usage:
   python img2texcelle.py design.jpg --width 200 --height 300 --points 1000000 \\
       --palette "#F9F6E8,#5D757C,#6A5C4E,#B1B3AA" --outline "#5F5F58" --outline-mode keep
   python img2texcelle.py design.jpg --width 200 --height 300 --reed 397 --density 500 --fit crop --format bmp
+  python img2texcelle.py render.jpg --width 200 --height 300 --reed 397 --density 500 --specks 12
 
 Point definition:
   --reed/--density : horizontal points per m / vertical rows per m (loom quality)
@@ -605,10 +613,226 @@ def remove_islands(labels, n, min_area, max_passes=5):
     return total
 
 
+DIRECTIONS = ((0, 1), (1, 0), (1, 1), (1, -1))  # 0, 90, 45, 135 degrees as (dy, dx)
+
+
+def directional_mean(cov, length=9):
+    """Mean coverage along the orientation in which it varies least, per knot.
+
+    Returns (mean (h, w, K), orientation index into DIRECTIONS). Along a
+    straight edge or a thin line the coverage is constant in the direction of
+    the edge/line, so that orientation is chosen and its mean describes the
+    structure the knot lies on rather than the knot's own noisy value.
+    """
+    h, w, k = cov.shape
+    r = length // 2
+    best_var = np.full((h, w), np.inf, dtype=np.float32)
+    best = cov.copy()
+    ori = np.zeros((h, w), dtype=np.int8)
+    for o, (dy, dx) in enumerate(DIRECTIONS):
+        m = np.zeros_like(cov)
+        m2 = np.zeros_like(cov)
+        for i in range(-r, r + 1):
+            sh = np.stack([shifted(cov[..., c], i * dy, i * dx) for c in range(k)], -1)
+            m += sh
+            m2 += sh * sh
+        m /= length
+        var = (m2 / length - m * m).sum(-1)
+        hit = var < best_var
+        best_var[hit] = var[hit]
+        best[hit] = m[hit]
+        ori[hit] = o
+    return best, ori
+
+
+def straighten_runs(labels, soft, hard, thr=0.6, own=0.85, length=9, min_run=15):
+    """Decide straight, half-covered runs of knots as a whole instead of knot by knot.
+
+    Where a band edge or a thin line straddles a row of knots, every knot on
+    that row is covered about half by two colors (`soft` coverage, the area
+    fraction). The per-knot argmax is then decided by noise and a perfectly
+    straight edge comes out jagged; averaging over a short window does not
+    help because the mean itself sits near the tie and flips from segment to
+    segment. So knots whose `directional_mean` is undecided (max < `thr`,
+    own coverage < `own` so clean dots and strokes are never touched) are
+    grouped into runs along their orientation, and each run of at least
+    `min_run` knots takes one color: the majority of the source pixel labels
+    over the run (`hard` coverage; the soft mean would tie on a line that
+    straddles two rows evenly). Short runs (curved edges, small shapes) keep
+    their per-knot decision. Round trip on the real design: min_run 9 costs
+    0.5%, 15 costs 0.25% (2 px/knot); the Gemini band edge becomes one row
+    with either. Returns (knots changed, runs decided).
+    """
+    d, ori = directional_mean(soft, length)
+    amb = (d.max(-1) < thr) & (soft.max(-1) < own)
+    changed = 0
+    runs = 0
+    for o, (dy, dx) in enumerate(DIRECTIONS):
+        st = np.zeros((3, 3), dtype=bool)
+        st[1, 1] = st[1 + dy, 1 + dx] = st[1 - dy, 1 - dx] = True
+        comp, n = ndimage.label(amb & (ori == o), structure=st)
+        if n == 0:
+            continue
+        sizes = np.bincount(comp.ravel())
+        ids = np.nonzero(sizes[1:] >= min_run)[0] + 1
+        if len(ids) == 0:
+            continue
+        means = np.stack([ndimage.mean(hard[..., c], comp, ids) for c in range(hard.shape[-1])], -1)
+        lut = np.full(n + 1, -1, dtype=np.int16)
+        lut[ids] = means.argmax(1)
+        new = lut[comp]
+        sel = new >= 0
+        changed += int((labels[sel] != new[sel]).sum())
+        labels[sel] = new[sel].astype(labels.dtype)
+        runs += len(ids)
+    return changed, runs
+
+
+def detect_symmetry(img, ratio=0.35, margin=0.02):
+    """Find mirror symmetry of a design image: {axis: shift} for the symmetric axes.
+
+    axis 1 = left/right, 0 = top/bottom; `shift` is the roll (full-res px)
+    that aligns the flipped image with the image: pixel i mirrors onto pixel
+    size - 1 + shift - i, i.e. the mirror axis is shift / 2 px right/down of
+    the centre (`crop_to_axis` removes `shift` px on one side to centre it).
+    An axis counts as symmetric when the mean |image - mirrored image| (at
+    1/4 size, best shift within `margin` of the size, image edges excluded)
+    is below `ratio` times the same error for the image shifted by 8 px
+    (measured: Gemini renders 0.07-0.27 left/right and 0.76-0.94 top/bottom,
+    Texcelle designs 0.00-0.02 both).
+    """
+    small = img.convert("L").resize((max(img.width // 4, 8), max(img.height // 4, 8)))
+    g = np.asarray(small).astype(np.float32)
+    h, w = g.shape
+    edge = max(min(h, w) // 16, 1)
+    ref = min(np.abs(g - np.roll(g, 8, axis=a))[edge:-edge, edge:-edge].mean() for a in (0, 1))
+    if ref <= 0:
+        return {}
+    out = {}
+    for axis in (1, 0):
+        size = g.shape[axis]
+        lim = max(int(size * margin), 1)
+        sl = [slice(edge, -edge)] * 2
+        sl[axis] = slice(lim + edge, size - lim - edge)
+        sl = tuple(sl)
+        errs = [(np.abs(g - np.roll(np.flip(g, axis), d, axis))[sl].mean(), d)
+                for d in range(-lim, lim + 1)]
+        err, d = min(errs)
+        if err < ratio * ref:
+            out[axis] = 4 * d  # small px -> full px; refined by refine_axis_shift
+    return out
+
+
+def refine_axis_shift(img, axis, shift, search=4):
+    """Full-resolution refinement of the mirror axis shift found at 1/4 size."""
+    g = np.asarray(img.convert("L")).astype(np.float32)
+    size = g.shape[axis]
+    edge = max(size // 16, 1)
+    sl = [slice(None)] * 2
+    best = None
+    for d in range(shift - search, shift + search + 1):
+        sl[axis] = slice(abs(d) + edge, size - abs(d) - edge)
+        e = np.abs(g - np.roll(np.flip(g, axis), d, axis))[tuple(sl)].mean()
+        if best is None or e < best[0]:
+            best = (e, d)
+    return best[1]
+
+
+def crop_to_axis(img, shift_x=0, shift_y=0):
+    """Crop the image symmetrically around a mirror axis off centre by
+    (shift_x, shift_y) px (the rolls from `detect_symmetry`, positive = axis
+    right/down of the centre), so that the axis becomes the image centre and
+    the knot grid mirrors onto itself."""
+    w, h = img.size
+    x0, x1 = max(0, shift_x), w + min(0, shift_x)
+    y0, y1 = max(0, shift_y), h + min(0, shift_y)
+    return img.crop((x0, y0, x1, y1))
+
+
+def mirror_average(a, lr, tb):
+    """Average an (h, w, K) coverage map with its mirror image(s), so both
+    halves of a symmetric design are decided from the same evidence."""
+    if lr:
+        a = 0.5 * (a + a[:, ::-1])
+    if tb:
+        a = 0.5 * (a + a[::-1])
+    return a
+
+
+def mirror_copy(labels, lr, tb):
+    """Make the label map exactly symmetric: the left (top) half is copied
+    onto the right (bottom) half; a middle column/row stays as it is."""
+    h, w = labels.shape
+    if lr:
+        labels[:, w - w // 2:] = labels[:, :w // 2][:, ::-1]
+    if tb:
+        labels[h - h // 2:] = labels[:h // 2][::-1]
+
+
+def remove_shading_specks(labels, palette, n, max_area, ring_dom=0.8, hue_tol=25.0,
+                          neutral=8.0, max_passes=5):
+    """Repaint small islands that are a shade of the one color enclosing them.
+
+    A shaded render (bevels, drop shadows, highlights) leaves 1-knot slivers
+    of dark brown inside tan or cream inside tan. Such a component below
+    `max_area` knots whose 1-knot ring is at least `ring_dom` one color, and
+    whose color has the same Lab hue as that color (within `hue_tol` deg, or
+    one of them is nearly neutral: chroma < `neutral`), takes the enclosing
+    color. A cream dot on dark red (different hue) is kept. This also erases
+    real same-hue details (about 1% of the knots on a real Texcelle design),
+    so it is opt-in (--specks). Returns the number of knots repainted.
+    """
+    lab = rgb_to_lab(np.asarray(palette, dtype=np.uint8))
+    hue = np.arctan2(lab[:, 2], lab[:, 1])
+    chroma = np.hypot(lab[:, 1], lab[:, 2])
+    h, w = labels.shape
+    total = 0
+    for _ in range(max_passes):
+        changed = 0
+        for k in range(n):
+            comp, count = ndimage.label(labels == k, structure=EIGHT)
+            if count == 0:
+                continue
+            sizes = np.bincount(comp.ravel())
+            small = np.nonzero(sizes[1:] < max_area)[0] + 1
+            if len(small) == 0:
+                continue
+            objects = ndimage.find_objects(comp)
+            for i in small:
+                ys, xs = objects[i - 1]
+                ys = slice(max(ys.start - 1, 0), min(ys.stop + 1, h))
+                xs = slice(max(xs.start - 1, 0), min(xs.stop + 1, w))
+                region = labels[ys, xs]
+                inside = comp[ys, xs] == i
+                ring = ndimage.binary_dilation(inside, structure=EIGHT) & ~inside
+                votes = np.bincount(region[ring], minlength=n)
+                if votes.sum() == 0:
+                    continue
+                j = int(votes.argmax())
+                if j == k or votes[j] < ring_dom * votes.sum():
+                    continue
+                d_hue = abs((hue[j] - hue[k] + np.pi) % (2 * np.pi) - np.pi)
+                if d_hue < np.deg2rad(hue_tol) or min(chroma[j], chroma[k]) < neutral:
+                    region[inside] = j
+                    changed += int(sizes[i])
+        total += changed
+        if changed == 0:
+            break
+    return total
+
+
+def out_palette_for(palette, outline, keep_outline):
+    """Output yarn colors: the palette plus one outline yarn in keep mode."""
+    if keep_outline:
+        return np.concatenate([palette, np.round(outline.mean(0))[None, :].astype(np.uint8)])
+    return palette
+
+
 def convert(src, dst, width_cm, height_cm, colors, points=None, reed=None,
             density=None, palette=None, merge=12.0, min_area=None, denoise=0,
             rotate=True, outline="auto", outline_mode="drop", line_width=0,
-            lines=True, debug_dir=None, fmt="tiff", grid=None, fit=None):
+            lines=True, debug_dir=None, fmt="tiff", grid=None, fit=None,
+            symmetry="auto", specks=0):
     px_w, px_h, ppm_x, ppm_y = compute_pixels(width_cm, height_cm, points, reed, density, grid)
     knot_w_mm, knot_h_mm = width_cm * 10.0 / px_w, height_cm * 10.0 / px_h
     if min_area is None:
@@ -621,6 +845,33 @@ def convert(src, dst, width_cm, height_cm, colors, points=None, reed=None,
             and (img.width > img.height) != (width_cm > height_cm):
         img = img.transpose(Image.Transpose.ROTATE_90)
         print("image rotated 90 deg to match carpet orientation", flush=True)
+
+    # mirror symmetry of the design (Gemini renders are left/right symmetric,
+    # Texcelle designs usually both ways): both halves are then decided from
+    # the same averaged evidence and the output is made exactly symmetric, so
+    # opposite motifs come out identical. A source whose mirror axis is off
+    # centre is cropped so the axis is the centre of the knot grid.
+    sym = {}
+    if symmetry == "auto":
+        sym = detect_symmetry(img)
+    elif symmetry in ("lr", "both"):
+        sym[1] = 0
+    if symmetry in ("tb", "both"):
+        sym[0] = 0
+    if symmetry == "auto":
+        sym = {ax: refine_axis_shift(img, ax, d) for ax, d in sym.items()}
+    if sym:
+        names = {1: "left/right", 0: "top/bottom"}
+        print("symmetry: " + ", ".join(
+            f"{names[ax]}" + (f" (axis off centre by {d / 2:g} px)" if d else "")
+            for ax, d in sym.items()), flush=True)
+        if any(sym.values()):
+            img = crop_to_axis(img, sym.get(1, 0), sym.get(0, 0))
+            print(f"image cropped to {img.width}x{img.height} to centre the mirror axis",
+                  flush=True)
+    else:
+        print("symmetry: none", flush=True)
+    sym_lr, sym_tb = 1 in sym, 0 in sym
 
     # the image must have the carpet's aspect ratio, either with square pixels
     # (a rendering: 2:3 for 200 x 300 cm) or with one pixel per knot in both
@@ -713,14 +964,27 @@ def convert(src, dst, width_cm, height_cm, colors, points=None, reed=None,
         #     design rendered at 2 px/knot this keeps 98% of the knots, the
         #     ridge/skeleton path only 78% (it fattens 1-knot lines in dense
         #     pixel art), and it also looks better on a shaded render.
+        # soft coverage (the area fraction of every knot covered by each color,
+        # from the per-pixel coverage fractions) decides every knot; it beats
+        # the majority of one-hot pixel labels on the real design round trip
+        # (98.8% vs 98.2% at 2 px/knot, 99.3% vs 97.8% at a non-integer scale).
+        # The one-hot majority is still used to decide straight half-covered
+        # runs as a whole (straighten_runs), because the soft mean ties on a
+        # line straddling two rows evenly.
         onehot = np.stack([(alpha.argmax(-1) == k).astype(np.float32) for k in range(n)], -1)
-        del alpha, lab_s
-        labels = resize_alpha(onehot, knot_size, box=True).argmax(-1).astype(np.uint8)
+        hard = mirror_average(resize_alpha(onehot, knot_size, box=True), sym_lr, sym_tb)
         del onehot
+        soft = mirror_average(resize_alpha(alpha, knot_size, box=True), sym_lr, sym_tb)
+        del alpha, lab_s
+        labels = soft.argmax(-1).astype(np.uint8)
+        changed, runs = straighten_runs(labels, soft, hard)
+        print(f"straight runs: {runs} half-covered runs decided as a whole, "
+              f"{changed} knots changed", flush=True)
+        del soft, hard
         if debug_dir:
             _save_indexed(labels, all_colors, os.path.join(debug_dir, "regions.png"))
     else:
-        alpha = resize_alpha(alpha, knot_size)
+        alpha = mirror_average(resize_alpha(alpha, knot_size), sym_lr, sym_tb)
 
         # 4. regions: strongest region color; parts thinner than 3 knots become
         #    holes, filled from their surroundings (lines are redrawn below)
@@ -750,7 +1014,8 @@ def convert(src, dst, width_cm, height_cm, colors, points=None, reed=None,
             maps = [alpha[..., k] for k in range(n)]
             if outline is not None:
                 alpha_o = unmix(lab_s, pal_lab)[..., n:]
-                maps += [m for m in np.moveaxis(resize_alpha(alpha_o, knot_size), -1, 0)]
+                alpha_o = mirror_average(resize_alpha(alpha_o, knot_size), sym_lr, sym_tb)
+                maps += [m for m in np.moveaxis(alpha_o, -1, 0)]
                 liny += [lineness(m) for m in maps[n:]]
                 del alpha_o
             del alpha
@@ -810,13 +1075,22 @@ def convert(src, dst, width_cm, height_cm, colors, points=None, reed=None,
             fixed += remove_islands(labels, n_used, min_area)
         print(f"islands cleaned: {fixed} px repainted (min area {min_area}), "
               f"bumps smoothed: {bumps} px")
+    # shadow/highlight slivers of a shaded render: same-hue islands enclosed
+    # by one color (opt-in, it also erases real same-hue details)
+    if specks and specks > 1:
+        shade_pal = out_palette_for(palette, outline, keep_outline)
+        repainted = remove_shading_specks(labels, shade_pal, n_used, specks)
+        if min_area and min_area > 1:
+            remove_islands(labels, n_used, min_area)
+        print(f"shading specks: {repainted} knots repainted (below {specks} knots)")
+    # exact symmetry: tie-breaks in the cleanup could still differ between the halves
+    if sym_lr or sym_tb:
+        mirror_copy(labels, sym_lr, sym_tb)
 
     # 7. save 8-bit palette TIFF or BMP, no compression. Like Texcelle's own
     #    files: index 0 is black and unused (yarns start at 1) and the
     #    resolution fields hold points per meter (397 x 500 -> "397 x 500 dpi").
-    out_palette = palette
-    if keep_outline:
-        out_palette = np.concatenate([palette, np.round(outline.mean(0))[None, :].astype(np.uint8)])
+    out_palette = out_palette_for(palette, outline, keep_outline)
     pal = Image.fromarray(labels + 1, "P")
     flat_palette = [0, 0, 0] + out_palette.ravel().tolist()
     pal.putpalette(flat_palette + [0] * (768 - len(flat_palette)))
@@ -889,6 +1163,15 @@ def main():
                    help="median filter size on source image (0=off; breaks 1px lines)")
     p.add_argument("--no-rotate", action="store_true",
                    help="do not rotate image to match carpet orientation")
+    p.add_argument("--symmetry", choices=["auto", "none", "lr", "tb", "both"], default="auto",
+                   help="mirror symmetry of the design: auto (default) detects it from the "
+                        "image; lr / tb / both force it; none disables. Symmetric halves "
+                        "are decided together and copied, so opposite motifs are identical")
+    p.add_argument("--specks", type=int, default=0,
+                   help="for shaded renders: repaint same-hue islands (shadow/highlight "
+                        "slivers) smaller than this many knots that are enclosed by one "
+                        "color (0 = off; 12 is a good value at 397x500; it also erases "
+                        "about 1%% of real same-hue details, so off by default)")
     p.add_argument("--debug-dir", default=None,
                    help="write regions.png / lines.png (intermediate label maps) here")
     a = p.parse_args()
@@ -918,7 +1201,7 @@ def main():
     convert(a.src, out, a.width, a.height, a.colors, a.points, a.reed, a.density,
             palette, a.merge, a.min_area, a.denoise, not a.no_rotate,
             outline, a.outline_mode, a.line_width, not a.no_lines, a.debug_dir, fmt,
-            grid, a.fit)
+            grid, a.fit, a.symmetry, a.specks)
 
 
 if __name__ == "__main__":
