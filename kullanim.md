@@ -113,6 +113,19 @@ Kurallar:
    adlandırın.
 5. `data/` klasörü git'e girmez (`.gitignore` içinde).
 
+Bölme aracının (`img2texcelle.split`, bkz. bölüm 6) çıktıları ise ayrı bir
+yerde durur: `data/cropped_images/<isim>/`. Kaynak resim orada **taşınmaz**,
+yerinde kalır:
+
+```
+data/
+  cropped_images/
+    desen/
+      desen_tl.png       <- sol üst çeyrek
+      desen_tr.png       <- sağ üst çeyrek
+      desen_tl_2.png     <- aynı resim ikinci kez bölünürse
+```
+
 ---
 
 ## 5. Hızlı başlangıç
@@ -175,7 +188,61 @@ sürer.
 
 ---
 
-## 6. Kaynak görüntü kuralları
+## 6. Deseni eş parçalara bölme (`img2texcelle.split`)
+
+Ayna simetrik bir desende yalnızca bir yarı ya da bir çeyrek üzerinde çalışmak
+yeter. `img2texcelle.split`, bir resmi **birebir eş** 2 veya 4 parçaya böler ve
+parçaları kayıpsız PNG olarak kaydeder. Dönüştürme yapmaz; sadece keser.
+
+```bash
+# sol / sağ yarılar (dikey kesik)
+.venv/bin/python -m img2texcelle.split desen.jpg --parts 2 --axis lr
+
+# üst / alt yarılar (yatay kesik)
+.venv/bin/python -m img2texcelle.split desen.jpg --parts 2 --axis tb
+
+# dört çeyrek
+.venv/bin/python -m img2texcelle.split desen.jpg --parts 4
+
+# yalnızca sol üst çeyreği kaydet
+.venv/bin/python -m img2texcelle.split desen.jpg --parts 4 --keep tl
+
+# yalnızca sol yarıyı kaydet
+.venv/bin/python -m img2texcelle.split desen.jpg --parts 2 --axis lr --keep left
+```
+
+| Seçenek | Açıklama |
+|---|---|
+| `src` | Bölünecek resim (jpg/png). Yerinde kalır, taşınmaz. |
+| `--parts 2` / `--parts 4` | İki yarı ya da dört çeyrek. Zorunlu. |
+| `--axis lr` / `--axis tb` | Yalnızca `--parts 2` için zorunlu: `lr` = sol/sağ, `tb` = üst/alt. `--parts 4` ile verilmez. |
+| `--keep a,b` | Kaydedilecek parçalar, virgülle. Verilmezse hepsi. |
+
+Parça adları:
+
+- 2 parça, `--axis lr`: `left`, `right`
+- 2 parça, `--axis tb`: `top`, `bottom`
+- 4 parça: `tl` (sol üst), `tr` (sağ üst), `bl` (sol alt), `br` (sağ alt)
+
+Kurallar:
+
+1. Çıktılar `data/cropped_images/<isim>/<isim>_<parça>.png` yoluna yazılır;
+   her resmin kendi klasörü vardır. Klasör zaten varsa yeni dosyalar oraya
+   eklenir.
+2. **Hiçbir şey üzerine yazılmaz.** Aynı parça ikinci kez üretilirse
+   `<isim>_<parça>_2.png`, üçüncüde `_3`, vb.
+3. Resmin eni ya da boyu **tek sayı** ise tam yarı yoktur; ortadaki piksel
+   sütunu/satırı **iki parçaya da** girer, böylece parçalar hep aynı boyutta
+   olur. Bu durumda ekrana bir uyarı yazılır. Örnek: 1697 px genişlik → iki
+   yarı da 849 px.
+4. Çıkan parça, ana araca kaynak olarak verilebilir. 1696×2528'lik bir
+   render'ın çeyreği 848×1264'tür ve 2:3 oranını korur; örneğin
+   `--width 100 --height 150 --reed 397 --density 500` ile dönüştürülebilir.
+   Ana araç bu parçayı her zamanki gibi `data/<parça adı>/` içine taşır.
+
+---
+
+## 7. Kaynak görüntü kuralları
 
 Araç yalnızca şu şartları sağlayan görüntülerle doğru çalışır:
 
@@ -195,7 +262,7 @@ Araç yalnızca şu şartları sağlayan görüntülerle doğru çalışır:
 
 ---
 
-## 7. Tüm komut satırı seçenekleri
+## 8. Tüm komut satırı seçenekleri
 
 ### Zorunlu
 
@@ -256,7 +323,7 @@ yarıya kopyalanır; karşılıklı motifler birebir aynı olur.
 
 ---
 
-## 8. Çıktı dosyaları
+## 9. Çıktı dosyaları
 
 ### `<isim>.tiff` veya `<isim>.bmp`
 
@@ -293,7 +360,7 @@ Sütunlar: `indeks  R  G  B  #RRGGBB`. İndeks 0 listelenmez.
 
 ---
 
-## 9. Arka planda ne yapılıyor? (Boru hattı adım adım)
+## 10. Arka planda ne yapılıyor? (Boru hattı adım adım)
 
 Ana fikir: kaynak görüntü düğüm ızgarasından daha ince olduğu için **her düğüm,
 alanının çoğunu kaplayan ipliği alır.** Bu basit fikri doğru uygulamak için
@@ -418,7 +485,7 @@ tarafından tüketildiği için değiştirilmez.
 
 ---
 
-## 10. Sonucu nasıl kontrol edersiniz?
+## 11. Sonucu nasıl kontrol edersiniz?
 
 Testler geçse bile asıl hatalar görsel ve sayısaldır.
 
@@ -462,7 +529,7 @@ Oy veya temizlik adımına dokunmadan önce eski çıktının bir kopyasını sa
 
 ---
 
-## 11. Sık karşılaşılan hatalar ve çözümleri
+## 12. Sık karşılaşılan hatalar ve çözümleri
 
 | Hata mesajı / durum | Sebep | Çözüm |
 |---|---|---|
@@ -472,6 +539,9 @@ Oy veya temizlik adımına dokunmadan önce eski çıktının bir kopyasını sa
 | `image ratio ... matches neither the carpet ratio ... nor the knot grid ratio` | Görüntü oranı halıyla uyuşmuyor. | `--fit crop` (önerilen) veya `--fit stretch`, ya da kaynağı doğru oranda üretin (1586×3002). |
 | `source is coarser than the knot grid` | Görüntü çok küçük, düğüm başına 1 pikselden az. | Deseni daha büyük render edin (2 px/düğüm). |
 | `bad palette color` | Palet hex değeri hatalı. | `#RRGGBB` biçimini kullanın, virgülle ayırın. |
+| `2 parts need --axis lr ... or tb` (split) | `--parts 2` verildi ama eksen yok. | `--axis lr` ya da `--axis tb` ekleyin. |
+| `unknown part(s) ...; valid: ...` (split) | `--keep` içinde o modda olmayan bir parça adı var. | 2 parçada `left,right` / `top,bottom`, 4 parçada `tl,tr,bl,br` kullanın. |
+| `warning: odd width ...` (split) | Resmin eni/boyu tek sayı. | Hata değil: orta piksel iki parçaya da girer. Tam yarı isteniyorsa resmi çift boyuta getirin. |
 | Üst bordür tırtıklı | Kenar bir düğüm sırasının ortasından geçiyor. | Normalde `straighten_runs` çözer; tekrar oluşursa kaynağın 2 px/düğüm olduğundan emin olun. |
 | Karşılıklı motifler farklı | Simetri tespit edilmedi. | `--symmetry lr` / `tb` / `both` ile zorlayın. |
 | Bir tarafta olan motif kayboldu | Neredeyse simetrik desen, eksen tespit edildi ve ortalandı. | `--symmetry none` ya da yalnızca doğru ekseni zorlayın. |
@@ -480,7 +550,7 @@ Oy veya temizlik adımına dokunmadan önce eski çıktının bir kopyasını sa
 
 ---
 
-## 12. Denenip vazgeçilenler (tekrar denemeyin)
+## 13. Denenip vazgeçilenler (tekrar denemeyin)
 
 - **Büyütme sonrası keskinleştirme (unsharp mask):** kenarlarda sahte
   konturlar üretir.
@@ -502,7 +572,7 @@ Oy veya temizlik adımına dokunmadan önce eski çıktının bir kopyasını sa
 
 ---
 
-## 13. Kod düzeni (geliştirici için kısa harita)
+## 14. Kod düzeni (geliştirici için kısa harita)
 
 ```
 img2texcelle/
@@ -518,9 +588,11 @@ img2texcelle/
   vote.py       resize_alpha (BOX), directional_mean, straighten_runs, vote_knots
   cleanup.py    remove_islands, remove_shading_specks
   output.py     save_indexed (TIFF/BMP, indeks 0 ayrılmış, dpi = ppm), write_palette_txt
+  split.py      python -m img2texcelle.split: 2/4 eş parça -> data/cropped_images/<isim>/
 tests/
   test_smoke.py      sentetik 2:3 desen uçtan uca; kaba kaynak ve oran hatası testleri
   test_workspace.py  data/<isim>/ klasör kuralları (taşıma, _2/_3 adlandırma, çakışma)
+  test_split.py      bölme: eş kutular, tek boyutta orta piksel, ayna eşitliği, --keep, klasör kuralı
 ```
 
 Testleri çalıştırmak için:

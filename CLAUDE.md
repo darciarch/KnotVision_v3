@@ -34,7 +34,13 @@ python3 -m venv .venv && .venv/bin/pip install -e ".[test]"   # pillow, numpy, s
 # image/carpet aspect mismatch is an error unless --fit crop (center crop) or --fit stretch is given
 
 .venv/bin/python -m pytest          # smoke test on a synthetic design + data/<name>/ folder rules
+
+# split a design into exactly equal halves/quarters (mirror-symmetric designs only need one part)
+.venv/bin/python -m img2texcelle.split data/design.jpg --parts 2 --axis lr    # left/right halves (tb = top/bottom)
+.venv/bin/python -m img2texcelle.split data/design.jpg --parts 4 --keep tl    # only the top-left quarter (tl,tr,bl,br)
 ```
+
+`img2texcelle.split` writes lossless PNGs to `data/cropped_images/<name>/<name>_<part>.png`, one folder per source image; a later run on the same image adds to that folder with `_2`, `_3`, ... (nothing is ever overwritten) and the source is left where it is. `--keep` is a comma-separated list of part names (default all). An odd side puts its middle pixel row/column into both parts (a warning is printed), so the parts always have the same size.
 
 Tuning flags: `--merge` (delta E for merging auto colors), `--min-area` (knots; default 20 mm² of knots: 4 at 397×500), `--specks` (knots; default 0 = off: repaint same-hue islands below this size that one color encloses; 12 at 397×500; erases ~1% of real same-hue details on the real design, hence opt-in), `--symmetry` (`auto` / `none` / `lr` / `tb` / `both`, default `auto`: mirror-symmetric designs are decided from both halves together and copied, so opposite motifs are identical), `--fit` (`crop` / `stretch`), `--grid` (WxH), `--points` (points per m², square), `--denoise` (median size, default off, breaks 1 px lines), `--no-rotate`, `--format` (`tiff` / `bmp`, default `tiff`), `--debug-dir` (writes `regions.png`, the label map before cleanup).
 
@@ -55,7 +61,8 @@ img2texcelle/
   vote.py       resize_alpha (BOX), directional_mean, straighten_runs, vote_knots
   cleanup.py    remove_islands, remove_shading_specks
   output.py     save_indexed (TIFF/BMP, index 0 reserved, dpi = ppm), write_palette_txt
-tests/          test_smoke.py (synthetic 2:3 design end to end), test_workspace.py
+  split.py      python -m img2texcelle.split: 2/4 equal parts -> data/cropped_images/<name>/ (own argparse)
+tests/          test_smoke.py (synthetic 2:3 design end to end), test_workspace.py, test_split.py
 ```
 
 ## Pipeline (`pipeline.convert`)
