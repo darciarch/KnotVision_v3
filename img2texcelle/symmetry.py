@@ -107,3 +107,32 @@ def mirror_copy(labels, lr, tb):
         labels[:, w - w // 2:] = labels[:, :w // 2][:, ::-1]
     if tb:
         labels[h - h // 2:] = labels[:h // 2][::-1]
+
+
+def find_axis_shift(img, axis, margin=0.05, search=4):
+    """Best mirror-axis shift for one axis, without a symmetry threshold.
+
+    Used by `img2texcelle.split --symmetric`, where the user already knows
+    the design is symmetric. Same coarse search as `detect_symmetry` (1/4
+    size, best roll within `margin` of the size) followed by
+    `refine_axis_shift` at full resolution. Returns (shift, quality): `shift`
+    follows the `detect_symmetry` convention (full-res px, positive = axis
+    right/down of the centre); `quality` is the mirror error divided by the
+    error of an 8 px shift, the ratio `detect_symmetry` thresholds at 0.35
+    (smaller = more symmetric; > 1 is no better than random).
+    """
+    small = img.convert("L").resize((max(img.width // 4, 8), max(img.height // 4, 8)))
+    g = np.asarray(small).astype(np.float32)
+    h, w = g.shape
+    edge = max(min(h, w) // 16, 1)
+    ref = min(np.abs(g - np.roll(g, 8, axis=a))[edge:-edge, edge:-edge].mean() for a in (0, 1))
+    size = g.shape[axis]
+    lim = max(int(size * margin), 1)
+    sl = [slice(edge, -edge)] * 2
+    sl[axis] = slice(lim + edge, size - lim - edge)
+    sl = tuple(sl)
+    errs = [(np.abs(g - np.roll(np.flip(g, axis), d, axis))[sl].mean(), d)
+            for d in range(-lim, lim + 1)]
+    err, d = min(errs)
+    quality = err / ref if ref > 0 else 0.0
+    return refine_axis_shift(img, axis, 4 * d, search), quality

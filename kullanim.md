@@ -209,6 +209,12 @@ parçaları kayıpsız PNG olarak kaydeder. Dönüştürme yapmaz; sadece keser.
 
 # yalnızca sol yarıyı kaydet
 .venv/bin/python -m img2texcelle.split desen.jpg --parts 2 --axis lr --keep left
+
+# ayna ekseni tam ortada olmayan bir desen: gerçek ekseni bul, ona göre böl
+.venv/bin/python -m img2texcelle.split desen.jpg --parts 2 --axis lr --symmetric
+
+# ekseni elle ver: eksen merkezin 3 px sağında (DX = 2 x 3 = 6), dikeyde ortada
+.venv/bin/python -m img2texcelle.split desen.jpg --parts 4 --shift 6,0
 ```
 
 | Seçenek | Açıklama |
@@ -217,6 +223,8 @@ parçaları kayıpsız PNG olarak kaydeder. Dönüştürme yapmaz; sadece keser.
 | `--parts 2` / `--parts 4` | İki yarı ya da dört çeyrek. Zorunlu. |
 | `--axis lr` / `--axis tb` | Yalnızca `--parts 2` için zorunlu: `lr` = sol/sağ, `tb` = üst/alt. `--parts 4` ile verilmez. |
 | `--keep a,b` | Kaydedilecek parçalar, virgülle. Verilmezse hepsi. |
+| `--symmetric` | Kesilecek eksen(ler)de desenin **gerçek ayna eksenini** bulur ve resmi, eksen tam ortaya gelecek şekilde bir kenardan kırpar; sonra böler. Parçalar böylece birbirinin birebir aynası olur. Verilmezse resim geometrik ortadan kesilir (eski davranış). |
+| `--shift DX,DY` | Ekseni elle verir (`--symmetric` gerekmez): eksen merkezin DX/2 px sağında ve DY/2 px altındadır; eksi değer sol/üst. Örn. eksen 3 px solda ise `--shift -6,0`. Kesilmeyen eksenin değeri yok sayılır. |
 
 Parça adları:
 
@@ -239,6 +247,15 @@ Kurallar:
    render'ın çeyreği 848×1264'tür ve 2:3 oranını korur; örneğin
    `--width 100 --height 150 --reed 397 --density 500` ile dönüştürülebilir.
    Ana araç bu parçayı her zamanki gibi `data/<parça adı>/` içine taşır.
+4. `--symmetric` ile eksen ortada değilse bir kenardan birkaç px atılır;
+   kayma ve kırpılmış boyut ekrana yazılır (`symmetry: left/right axis off
+   centre by 2.5 px`, `image cropped to 1787x2390 ...`). Eksen simetrik
+   görünmüyorsa (ör. yalnızca sol/sağ simetrik bir desende `--parts 4`) o
+   eksen için uyarı verilir ve ortadan kesilir, kırpma yapılmaz. Kırpma en/boy
+   oranını %2'den fazla değiştirirse dönüştürmede `--fit crop` gerekebilir.
+   Not: `--symmetric` yalnızca **eksenin yerini** düzeltir; Gemini iki yarıyı
+   biraz farklı çizdiyse (motifler birebir aynı değilse) parçalar yine farklı
+   olur. Bunu dönüştürme aşaması çözer (`--symmetry`, bkz. bölüm 8).
 
 ---
 
@@ -600,3 +617,10 @@ Testleri çalıştırmak için:
 ```bash
 .venv/bin/python -m pytest
 ```
+
+
+
+
+Gelistiricinin Kendi Notlari :
+-> Split tam calismiyor.
+-> finer details icin baska bir cözüm yolu gerekli 

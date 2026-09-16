@@ -1,9 +1,10 @@
 """img2texcelle.split: exactly equal halves/quarters into data/cropped_images/."""
 
+import numpy as np
 import pytest
 from PIL import Image
 
-from img2texcelle.split import main, split_boxes, split_file, split_image
+from img2texcelle.split import centre_on_axis, main, split_boxes, split_file, split_image
 
 
 def mirrored_image(w, h):
@@ -15,6 +16,34 @@ def mirrored_image(w, h):
             qx, qy = min(x, w - 1 - x), min(y, h - 1 - y)
             px[x, y] = (qx * 17 % 256, qy * 29 % 256, (qx + qy) % 256)
     return img
+
+
+def noisy_mirrored_image(w, h, block=16, seed=0):
+    """A both-ways mirror-symmetric RGB image of random `block`-px squares (a
+    design with distinct detail everywhere, so the mirror axis is unambiguous)."""
+    rng = np.random.default_rng(seed)
+    hw, hh = w - w // 2, h - h // 2
+    q = rng.integers(0, 256, (-(-hh // block), -(-hw // block), 3), dtype=np.uint8)
+    q = q.repeat(block, 0).repeat(block, 1)[:hh, :hw]
+    a = np.concatenate([q, q[:, ::-1][:, (w % 2):]], axis=1)
+    a = np.concatenate([a, a[::-1][(h % 2):]], axis=0)
+    return Image.fromarray(a)
+
+
+def off_centre_image(w, h, dx, dy):
+    """`noisy_mirrored_image(w, h)` with a plain strip of dx px on the right and
+    dy px at the bottom, so the mirror axis is dx/2 (dy/2) px left/up of the
+    geometric centre (shift -dx, -dy in the `detect_symmetry` convention)."""
+    img = Image.new("RGB", (w + dx, h + dy), (200, 90, 30))
+    img.paste(noisy_mirrored_image(w, h), (0, 0))
+    return img
+
+
+def mirrors(a, b, method):
+    return a.size == b.size and a.tobytes() == b.transpose(method).tobytes()
+
+
+LR, TB = Image.Transpose.FLIP_LEFT_RIGHT, Image.Transpose.FLIP_TOP_BOTTOM
 
 
 def test_boxes_even():
@@ -93,3 +122,43 @@ def test_main_argument_errors(tmp_path, monkeypatch):
     main([str(src), "--parts", "4", "--keep", "tl,br"])
     names = sorted(p.name for p in (tmp_path / "data" / "cropped_images" / "design").iterdir())
     assert names == ["design_br.png", "design_tl.png"]
+
+
+def test_off_centre_axis_is_not_symmetric_by_default():
+    img = off_centre_image(160, 240, 3, 2)
+    lr = split_image(img, 2, "lr")
+    assert not mirrors(lr["left"], lr["right"], LR)
+    assert centre_on_axis(img, 2, "lr")[0] is img  # no flag: untouched
+
+
+@pytest.mark.parametrize("kw", [{"symmetric": True}, {"shift": (-3, -2)}])
+def test_centre_on_axis_makes_exact_mirrors(kw):
+    img = off_centre_image(160, 240, 3, 2)
+    cut, found = centre_on_axis(img, 4, **kw)
+    assert cut.size == (160, 240) and found == {1: -3, 0: -2}
+    q = split_image(cut, 4)
+    assert mirrors(q["tl"], q["tr"], LR) and mirrors(q["tl"], q["bl"], TB)
+    # --axis lr only centres left/right; the extra bottom rows stay
+    cut, found = centre_on_axis(img, 2, "lr", **kw)
+    assert cut.size == (160, 242) and found == {1: -3}
+    lr = split_image(cut, 2, "lr")
+    assert mirrors(lr["left"], lr["right"], LR)
+    cut, found = centre_on_axis(img, 2, "tb", **kw)
+    assert cut.size == (163, 240) and found == {0: -2}
+    tb = split_image(cut, 2, "tb")
+    assert mirrors(tb["top"], tb["bottom"], TB)
+
+
+def test_symmetric_flags_from_main(tmp_path, monkeypatch):
+    src = tmp_path / "design.png"
+    off_centre_image(160, 240, 3, 2).save(src)
+    monkeypatch.setattr("img2texcelle.split.data_dir", lambda: tmp_path / "data")
+    out = tmp_path / "data" / "cropped_images" / "design"
+    main([str(src), "--parts", "2", "--axis", "lr", "--symmetric"])
+    assert mirrors(Image.open(out / "design_left.png"), Image.open(out / "design_right.png"), LR)
+    main([str(src), "--parts", "4", "--shift", "-3,-2"])
+    assert Image.open(out / "design_tl.png").size == (80, 120)
+    assert mirrors(Image.open(out / "design_tl.png"), Image.open(out / "design_br.png"), LR) is False
+    assert mirrors(Image.open(out / "design_tl.png"), Image.open(out / "design_tr.png"), LR)
+    with pytest.raises(SystemExit):
+        main([str(src), "--parts", "4", "--shift", "3"])
