@@ -39,7 +39,7 @@ def build_parser():
     p.add_argument("--palette", default=None,
                    help='fixed yarn colors, e.g. "#F9F6E8,#5D757C,#6A5C4E" (overrides '
                         '--colors; recommended, the loom\'s yarn colors are known)')
-    p.add_argument("--merge", type=float, default=12.0,
+    p.add_argument("--merge", type=float, default=6.0,
                    help="merge auto colors closer than this delta E (default 12)")
     p.add_argument("--min-area", type=int, default=None,
                    help="areas smaller than this many knots take the surrounding color "
