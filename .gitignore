@@ -1,0 +1,5 @@
+*.bmp
+*.tiff
+data/*
+*.pyc
+__pycache__/

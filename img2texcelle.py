@@ -1,40 +1,60 @@
 #!/usr/bin/env python3
 """
 img2texcelle.py - convert a ready design image (jpg/png) into a Texcelle-compatible
-indexed TIFF.
+indexed TIFF or BMP: one palette entry per yarn, one pixel per knot.
 
-The design is treated as regions + thin lines, not as independent pixels:
+The knot grid is the loom quality: --reed (points per m across) x --density
+(rows per m along), e.g. 397 x 500 for a 200 x 300 cm carpet gives 794 x 1500
+knots of 2.52 x 2.00 mm (knots are not square). Like Texcelle's own files, the
+output has index 0 unused and reed/density in the resolution ("dpi") fields.
 
-  1. rotate image 90 deg if its orientation differs from the carpet
+Two paths, chosen from the source pixels per knot:
+
+  A. real loom quality (source finer than the knot grid, e.g. a 1792 px wide
+     render for 794 knots): every knot takes the yarn color covering most of
+     it. Measured by rendering the real design at 2 px/knot and converting it
+     back, this keeps 98% of the knots; a ridge/skeleton line path only 78%.
+  B. coarse source (small soft jpeg for 1 M points/m^2, ~2 knots per source
+     px): regions + thin lines, because a 1 px line would break into beads
+     when simply resized.
+
+  1. rotate image 90 deg if its orientation differs from the carpet; the
+     image must have the carpet's aspect ratio (--fit crop / stretch otherwise)
   2. optional denoise at source resolution (median filter, off by default)
   3. pick yarn palette (auto k-means in Lab on flat areas, or --palette);
-     --outline adds colors that only occur as thin contour lines
+     --outline adds colors that only occur as thin contour lines (path B)
   4. unmix every source pixel into coverage fractions of (at most) two yarn
      colors, so a blurred edge or a blurred 1px line is "60% brown / 40% cream"
      instead of a wrong in-between color; thin strips of an in-between color
-     (e.g. grey on a blue/cream edge) are unmixed into their neighbours
-  5. resize the coverage maps (not the RGB image) to the knot grid
-  6. regions: every knot takes the color with the largest coverage; parts
+     (e.g. grey on a blue/cream edge) are unmixed into their neighbours; on
+     path A only colors found nearby may mix (with 15 yarns some unrelated
+     pair explains almost any color)
+  5. A: area-average the source labels onto the knots, argmax.
+     B: resize the coverage maps (not the RGB image) to the knot grid
+  6. B: regions: every knot takes the color with the largest coverage; parts
      thinner than 3 knots are dropped and refilled from their surroundings
-  7. lines: a ridge detector on each color's coverage map follows thin lines
-     even where they are blurred below 50%, so they stay continuous; every
-     connected line gets one color, decided from its mean color against its
-     background (a blurred blue line looks grey/dark pixel by pixel); dark
+  7. B: lines: a ridge detector on each color's coverage map follows thin
+     lines even where they are blurred below 50%, so they stay continuous;
+     every connected line gets one color, decided from its mean color against
+     its background (a blurred blue line looks grey/dark pixel by pixel); dark
      contour lines (--outline) are erased or drawn as an extra yarn; the
      centerlines are redrawn with their measured width (or --line-width)
-  8. cleanup: areas below --min-area take the dominant surrounding color, 1px
-     bumps and notches are smoothed
-  9. save as 8-bit palette TIFF + palette text file
+  8. cleanup: areas below --min-area (default 20 mm^2 worth of knots) take
+     the dominant surrounding color; B also smooths 1px bumps and notches
+  9. save as 8-bit palette TIFF or BMP (--format) + palette text file
 
 Usage:
+  python img2texcelle.py design.jpg --width 200 --height 300 --reed 397 --density 500 --colors 8
+  python img2texcelle.py design.jpg --width 200 --height 300 --grid 793x1501 --reed 397 --density 500
   python img2texcelle.py design.jpg --width 200 --height 300 --points 1000000 --colors 8
-  python img2texcelle.py design.jpg --width 200 --height 300 --reed 1000 --density 1200 --colors 8
   python img2texcelle.py design.jpg --width 200 --height 300 --points 1000000 \\
       --palette "#F9F6E8,#5D757C,#6A5C4E,#B1B3AA" --outline "#5F5F58" --outline-mode keep
+  python img2texcelle.py design.jpg --width 200 --height 300 --reed 397 --density 500 --fit crop --format bmp
 
 Point definition:
+  --reed/--density : horizontal points per m / vertical rows per m (loom quality)
   --points   : points per m^2, assumed square (same density in both directions)
-  --reed/--density : horizontal points per m / vertical points per m (overrides --points)
+  --grid     : exact knot grid WxH (to match an existing Texcelle file)
 """
 
 import argparse
@@ -51,18 +71,24 @@ from skimage.morphology import skeletonize
 EIGHT = np.ones((3, 3), dtype=bool)
 
 
-def compute_pixels(width_cm, height_cm, points=None, reed=None, density=None):
-    """Return (px_w, px_h) for the design."""
+def compute_pixels(width_cm, height_cm, points=None, reed=None, density=None, grid=None):
+    """Return (px_w, px_h, ppm_x, ppm_y): the knot grid and the points per
+    meter written into the file header (Texcelle stores reed/density there)."""
     if reed and density:
         ppm_x, ppm_y = reed, density
     elif points:
         # square assumption: same points per meter in both directions
         ppm_x = ppm_y = math.sqrt(points)
+    elif grid:
+        ppm_x, ppm_y = grid[0] * 100.0 / width_cm, grid[1] * 100.0 / height_cm
     else:
-        raise ValueError("give --points or --reed and --density")
-    px_w = round(width_cm / 100.0 * ppm_x)
-    px_h = round(height_cm / 100.0 * ppm_y)
-    return px_w, px_h
+        raise ValueError("give --points, --reed and --density, or --grid")
+    if grid:
+        px_w, px_h = grid
+    else:
+        px_w = round(width_cm / 100.0 * ppm_x)
+        px_h = round(height_cm / 100.0 * ppm_y)
+    return px_w, px_h, ppm_x, ppm_y
 
 
 def rgb_to_lab(rgb):
@@ -123,9 +149,12 @@ def auto_palette(rgb, lab, flat, colors, merge, min_share=0.005, seed=0):
     k = min(colors, len(x_lab))
     centers = [x_lab[rng.integers(len(x_lab))]]
     for _ in range(1, k):
-        d = sq_dist(x_lab, np.array(centers)).min(1)
+        d = np.maximum(sq_dist(x_lab, np.array(centers)).min(1), 0)  # rounding can give -1e-6
+        if d.sum() <= 0:
+            break
         centers.append(x_lab[rng.choice(len(x_lab), p=d / d.sum())])
     centers = np.array(centers, dtype=np.float32)
+    k = len(centers)
 
     for _ in range(40):
         assign = sq_dist(x_lab, centers).argmin(1)
@@ -213,19 +242,30 @@ def smooth_chroma(lab, radius=2, sigma_s=1.5, sigma_l=6.0):
     return out
 
 
-def unmix(lab, pal_lab, margin=3.0):
+def unmix(lab, pal_lab, margin=3.0, reach=0):
     """Coverage fractions (h, w, K) of the palette colors for every pixel.
 
     A pixel is explained either as one pure color or as a mix of two colors
     (the Lab segment between them that passes closest to the pixel). Pure wins
     unless a mix fits better by more than `margin` delta E, so pixels inside a
     wide area of an in-between color stay that color.
+
+    With `reach` > 0 a pair is only allowed where both colors occur (as the
+    nearest pure color) within `reach` px: with many yarns some segment
+    between two unrelated colors passes through almost any color (a slightly
+    desaturated magenta line is exactly 30% purple + 70% orange), and only
+    neighbours can blur into a pixel.
     """
     h, w, _ = lab.shape
     k = len(pal_lab)
     px = lab.reshape(-1, 3)
     pairs = [(a, b) for a in range(k) for b in range(a + 1, k)]
     alpha = np.zeros((len(px), k), dtype=np.float32)
+    near = None
+    if reach > 0:
+        nearest = sq_dist(px, pal_lab).argmin(1).reshape(h, w)
+        near = [ndimage.maximum_filter(nearest == c, size=2 * reach + 1).ravel()
+                for c in range(k)]
     step = 1_000_000
     for s0 in range(0, len(px), step):
         p = px[s0:s0 + step]
@@ -238,6 +278,8 @@ def unmix(lab, pal_lab, margin=3.0):
             s = np.clip((p - pal_lab[a]) @ dv / (dv @ dv), 0, 1)
             off = np.linalg.norm(p - (pal_lab[a] + s[:, None] * dv), axis=1)
             hit = off < best_off
+            if near is not None:
+                hit &= near[a][s0:s0 + step] & near[b][s0:s0 + step]
             best_off[hit], best_pair[hit], best_s[hit] = off[hit], i, s[hit]
         out = alpha[s0:s0 + step]
         pure = best_pair < 0
@@ -312,12 +354,16 @@ def unmix_thin_blends(alpha, lab, palette, pal_lab, reach=7):
     return changed
 
 
-def resize_alpha(alpha, size):
-    """Resize coverage maps to the knot grid (W, H) -> (H, W, K)."""
+def resize_alpha(alpha, size, box=False):
+    """Resize coverage maps to the knot grid (W, H) -> (H, W, K).
+
+    Bilinear when upscaling; `box` (exact area average, so a knot's value is
+    the fraction of it covered) when downscaling."""
     out = np.empty((size[1], size[0], alpha.shape[-1]), dtype=np.float32)
+    method = Image.Resampling.BOX if box else Image.Resampling.BILINEAR
     for k in range(alpha.shape[-1]):
         im = Image.fromarray(np.ascontiguousarray(alpha[..., k]), "F")
-        out[..., k] = np.asarray(im.resize(size, Image.Resampling.BILINEAR))
+        out[..., k] = np.asarray(im.resize(size, method))
     return out
 
 
@@ -511,7 +557,10 @@ def smooth_bumps(labels, n):
     """One pass: a pixel with >= 3 of its 4 neighbors in one other color takes that color.
 
     Removes 1px bumps and fills 1px notches on edges. Line tips (one same-color
-    neighbor behind, a same-color neighbor beside) are left alone.
+    neighbor behind, a same-color neighbor beside) are left alone. Only for the
+    knot-grid (upscale) path: on a real loom grid the corner knot of a 1-knot
+    diagonal staircase has 3 foreign neighbors, and this would erase it (3% of
+    the real design).
     """
     p = np.pad(labels, 1, mode="edge")
     nb = np.stack([p[:-2, 1:-1], p[2:, 1:-1], p[1:-1, :-2], p[1:-1, 2:]])
@@ -557,10 +606,14 @@ def remove_islands(labels, n, min_area, max_passes=5):
 
 
 def convert(src, dst, width_cm, height_cm, colors, points=None, reed=None,
-            density=None, palette=None, merge=12.0, min_area=20, denoise=0,
+            density=None, palette=None, merge=12.0, min_area=None, denoise=0,
             rotate=True, outline="auto", outline_mode="drop", line_width=0,
-            lines=True, debug_dir=None):
-    px_w, px_h = compute_pixels(width_cm, height_cm, points, reed, density)
+            lines=True, debug_dir=None, fmt="tiff", grid=None, fit=None):
+    px_w, px_h, ppm_x, ppm_y = compute_pixels(width_cm, height_cm, points, reed, density, grid)
+    knot_w_mm, knot_h_mm = width_cm * 10.0 / px_w, height_cm * 10.0 / px_h
+    if min_area is None:
+        # 20 mm^2 (20 knots at 1 M points/m^2, 4 knots at 397 x 500)
+        min_area = max(2, round(20.0 / (knot_w_mm * knot_h_mm)))
 
     img = Image.open(src).convert("RGB")
 
@@ -569,12 +622,49 @@ def convert(src, dst, width_cm, height_cm, colors, points=None, reed=None,
         img = img.transpose(Image.Transpose.ROTATE_90)
         print("image rotated 90 deg to match carpet orientation", flush=True)
 
-    # warn if aspect ratio of image and carpet differ (image will be stretched)
+    # the image must have the carpet's aspect ratio, either with square pixels
+    # (a rendering: 2:3 for 200 x 300 cm) or with one pixel per knot in both
+    # directions (a Texcelle-like grid: 793:1501, knots are not square);
+    # otherwise the user chooses --fit crop / stretch (circles become ellipses)
     img_ratio = img.width / img.height
     carpet_ratio = width_cm / height_cm
-    if abs(img_ratio - carpet_ratio) / carpet_ratio > 0.02:
-        print(f"WARNING: image ratio {img_ratio:.3f} != carpet ratio {carpet_ratio:.3f}, "
-              f"image will be stretched", file=sys.stderr)
+    grid_ratio = px_w / px_h
+    off = min(abs(img_ratio - carpet_ratio) / carpet_ratio,
+              abs(img_ratio - grid_ratio) / grid_ratio)
+    if off > 0.02:
+        if img_ratio > carpet_ratio:
+            crop_w, crop_h = round(img.height * carpet_ratio), img.height
+        else:
+            crop_w, crop_h = img.width, round(img.width / carpet_ratio)
+        if fit is None:
+            raise SystemExit(
+                f"ERROR: image ratio {img_ratio:.3f} ({img.width}x{img.height}) matches "
+                f"neither the carpet ratio {carpet_ratio:.3f} ({width_cm:g}x{height_cm:g} cm) "
+                f"nor the knot grid ratio {grid_ratio:.3f} ({px_w}x{px_h}). Use --fit crop "
+                f"(center crop to {crop_w}x{crop_h}), --fit stretch, or make the source "
+                f"{2 * px_w}x{2 * px_h} (2 px per knot).")
+        if fit == "crop":
+            x0, y0 = (img.width - crop_w) // 2, (img.height - crop_h) // 2
+            img = img.crop((x0, y0, x0 + crop_w, y0 + crop_h))
+            print(f"image center-cropped to {crop_w}x{crop_h} to match carpet ratio", flush=True)
+        else:
+            print(f"WARNING: image ratio {img_ratio:.3f} != carpet ratio {carpet_ratio:.3f}, "
+                  f"image will be stretched", file=sys.stderr)
+
+    # source px per knot: > 1 means the source is finer than the knot grid
+    # (real loom quality): every knot takes the color covering most of it;
+    # <= 1 (a soft, small source for 1 M points/m^2) means the knot grid is
+    # finer: regions + lines are found there, see below
+    sx, sy = img.width / px_w, img.height / px_h
+    scale = math.sqrt(sx * sy)
+    down = scale > 1.0
+    print(f"knot grid {px_w} x {px_h} ({ppm_x:.0f} x {ppm_y:.0f} points/m, knot "
+          f"{knot_w_mm:.2f} x {knot_h_mm:.2f} mm, {ppm_x * ppm_y:.0f} points/m^2), "
+          f"{sx:.2f} x {sy:.2f} source px per knot: "
+          f"{'every knot takes the color covering most of it' if down else 'regions + lines on the knot grid'}, "
+          f"min area {min_area} knots", flush=True)
+    if down:
+        lines = False  # see 4d below
 
     # 1. remove jpeg speckle at source resolution
     if denoise and denoise > 1:
@@ -588,6 +678,8 @@ def convert(src, dst, width_cm, height_cm, colors, points=None, reed=None,
     if palette is None:
         palette = auto_palette(rgb, lab, flat, colors, merge)
     n = len(palette)
+    if down:
+        outline = None  # contours are not redrawn on a real loom grid
     if isinstance(outline, str) and outline == "auto":
         outline = auto_outline(rgb, lab, rgb_to_lab(palette))
         if outline is not None:
@@ -597,134 +689,182 @@ def convert(src, dst, width_cm, height_cm, colors, points=None, reed=None,
     n_all = len(all_colors)
     pal_lab = rgb_to_lab(all_colors)
 
-    # 3. coverage fractions per region color at source resolution, then on the
-    #    knot grid (outline colors are not used here: they would steal blurred
-    #    blue lines, which look dark too)
+    # 3. coverage fractions per region color at source resolution (outline
+    #    colors are not used here: they would steal blurred blue lines, which
+    #    look dark too)
     lab_s = smooth_chroma(lab)
-    alpha = unmix(lab_s, pal_lab[:n])
+    # on a source grid finer than the knots only neighbours (a blurred edge,
+    # JPEG chroma bleed) can mix into a pixel, so mixes are limited to colors
+    # found nearby; with many yarns some unrelated pair explains almost any
+    # color otherwise
+    reach = math.ceil(scale) if down else 0
+    alpha = unmix(lab_s, pal_lab[:n], reach=reach)
     blends = unmix_thin_blends(alpha, lab_s, palette, pal_lab)
     print(f"edge blend pixels unmixed: {blends}", flush=True)
-    alpha = resize_alpha(alpha, (px_w, px_h))
     del lab, flat
+    knot_size = (px_w, px_h)
 
-    # 4. regions: strongest region color; parts thinner than 3 knots become
-    #    holes, filled from their surroundings (lines are redrawn below)
-    #    (coverage is smoothed a little first so soft, noisy boundaries do not
-    #    flicker between two colors). Line-like strips up to 5 knots wide are
-    #    holes too: they are redrawn as lines with a measured width below.
-    smooth = np.stack([ndimage.gaussian_filter(alpha[..., k], 1.0) for k in range(n)], -1)
-    labels = smooth.argmax(-1).astype(np.uint8)
-    del smooth
-    if lines:
-        liny = [lineness(alpha[..., k]) for k in range(n)]
-        holes = np.zeros(labels.shape, dtype=bool)
-        five = np.ones((5, 5), dtype=bool)
-        for k in range(n):
-            m = labels == k
-            holes |= m & ~ndimage.binary_opening(m, structure=EIGHT)
-            holes |= m & ~ndimage.binary_opening(m, structure=five) & (liny[k] > 0.15)
-        fill_holes(labels, holes)
-        print(f"region holes refilled: {int(holes.sum())} px", flush=True)
-        if debug_dir:
-            _save_indexed(labels, all_colors, os.path.join(debug_dir, "regions.png"))
-
-    # 5. lines: find thin lines in every coverage map, decide the color of each
-    #    connected line from its mean color, redraw centerlines with their width
-    # in keep mode all outline colors become one extra yarn (index n)
     keep_outline = outline_mode == "keep" and outline is not None
     n_used = n + 1 if keep_outline else n
-    if lines:
-        maps = [alpha[..., k] for k in range(n)]
-        if outline is not None:
-            alpha_o = unmix(lab_s, pal_lab)[..., n:]
-            maps += [m for m in np.moveaxis(resize_alpha(alpha_o, (px_w, px_h)), -1, 0)]
-            liny += [lineness(m) for m in maps[n:]]
-            del alpha_o
-        del alpha
-        # source Lab sampled on the knot grid, for the mean color of each line
-        ys = (np.arange(px_h) * lab_s.shape[0] / px_h).astype(int)
-        xs = (np.arange(px_w) * lab_s.shape[1] / px_w).astype(int)
-        lab_t = lab_s[ys][:, xs]
-        del lab_s
-        between = set(blend_pairs(palette))
-        regions = labels.copy()  # region labels around each line, lines removed
-        best = np.zeros(labels.shape, dtype=np.float32)
-        drawn = np.zeros(n_all, dtype=np.int64)
-        # pass 1: find and classify lines in every map
-        found = []
-        contour = np.zeros(labels.shape, dtype=bool)
-        for a, ln in zip(maps, liny):
-            skel, strength, width = detect_lines(a, ln)
-            if line_width:
-                width[skel] = line_width
-            color = classify_lines(skel, lab_t, regions, pal_lab, n, between)
-            if (color >= n).any():
-                contour |= ndimage.binary_dilation(color >= n, structure=EIGHT, iterations=2)
-            found.append((skel, strength, width, color))
-        del maps, liny
-        # pass 2: a contour is also a weak ridge in some region color's map (a
-        # dark contour looks a bit brown); such duplicates of a line already
-        # classified as outline must not be drawn as brown. Then draw.
-        for skel, strength, width, color in found:
-            comp, nc = ndimage.label(skel & (color >= 0) & (color < n), structure=EIGHT)
-            if nc:
-                dup = ndimage.mean(contour, comp, np.arange(1, nc + 1)) > 0.6
-                color[np.concatenate([[False], dup])[comp]] = -1
-            s = ndimage.maximum_filter(strength, size=7)
-            for c in np.unique(color[skel]):
-                if c < 0 or (c >= n and not keep_outline):
-                    continue
-                m = thicken(color == c, width)
-                hit = m & (s > best)
-                best[hit] = s[hit]
-                labels[hit] = min(int(c), n)
-                drawn[c] += int((color == c).sum())
-        print("line centerline pixels drawn per color: "
-              + ", ".join(f"{c}: {d}" for c, d in enumerate(drawn.tolist())), flush=True)
-        if debug_dir:
-            _save_indexed(labels, all_colors, os.path.join(debug_dir, "lines.png"))
-    else:
+    if down:
+        # 4d. real loom grid, source finer than the knots: every knot takes the
+        #     color covering most of it (labels at source resolution, area
+        #     averaged onto the knots). No line redrawing: measured on the real
+        #     design rendered at 2 px/knot this keeps 98% of the knots, the
+        #     ridge/skeleton path only 78% (it fattens 1-knot lines in dense
+        #     pixel art), and it also looks better on a shaded render.
+        onehot = np.stack([(alpha.argmax(-1) == k).astype(np.float32) for k in range(n)], -1)
         del alpha, lab_s
+        labels = resize_alpha(onehot, knot_size, box=True).argmax(-1).astype(np.uint8)
+        del onehot
+        if debug_dir:
+            _save_indexed(labels, all_colors, os.path.join(debug_dir, "regions.png"))
+    else:
+        alpha = resize_alpha(alpha, knot_size)
 
-    # 6. small areas take the dominant surrounding color, 1px bumps/notches smoothed
+        # 4. regions: strongest region color; parts thinner than 3 knots become
+        #    holes, filled from their surroundings (lines are redrawn below)
+        #    (coverage is smoothed a little first so soft, noisy boundaries do not
+        #    flicker between two colors). Line-like strips up to 5 knots wide are
+        #    holes too: they are redrawn as lines with a measured width below.
+        smooth = np.stack([ndimage.gaussian_filter(alpha[..., k], 1.0) for k in range(n)], -1)
+        labels = smooth.argmax(-1).astype(np.uint8)
+        del smooth
+        if lines:
+            liny = [lineness(alpha[..., k]) for k in range(n)]
+            holes = np.zeros(labels.shape, dtype=bool)
+            five = np.ones((5, 5), dtype=bool)
+            for k in range(n):
+                m = labels == k
+                holes |= m & ~ndimage.binary_opening(m, structure=EIGHT)
+                holes |= m & ~ndimage.binary_opening(m, structure=five) & (liny[k] > 0.15)
+            fill_holes(labels, holes)
+            print(f"region holes refilled: {int(holes.sum())} px", flush=True)
+            if debug_dir:
+                _save_indexed(labels, all_colors, os.path.join(debug_dir, "regions.png"))
+
+        # 5. lines: find thin lines in every coverage map, decide the color of each
+        #    connected line from its mean color, redraw centerlines with their width
+        # in keep mode all outline colors become one extra yarn (index n)
+        if lines:
+            maps = [alpha[..., k] for k in range(n)]
+            if outline is not None:
+                alpha_o = unmix(lab_s, pal_lab)[..., n:]
+                maps += [m for m in np.moveaxis(resize_alpha(alpha_o, knot_size), -1, 0)]
+                liny += [lineness(m) for m in maps[n:]]
+                del alpha_o
+            del alpha
+            # source Lab sampled on the knot grid, for the mean color of each line
+            ys = (np.arange(px_h) * lab_s.shape[0] / px_h).astype(int)
+            xs = (np.arange(px_w) * lab_s.shape[1] / px_w).astype(int)
+            lab_t = lab_s[ys][:, xs]
+            del lab_s
+            between = set(blend_pairs(palette))
+            regions = labels.copy()  # region labels around each line, lines removed
+            best = np.zeros(labels.shape, dtype=np.float32)
+            drawn = np.zeros(n_all, dtype=np.int64)
+            # pass 1: find and classify lines in every map
+            found = []
+            contour = np.zeros(labels.shape, dtype=bool)
+            for a, ln in zip(maps, liny):
+                skel, strength, width = detect_lines(a, ln)
+                if line_width:
+                    width[skel] = line_width
+                color = classify_lines(skel, lab_t, regions, pal_lab, n, between)
+                if (color >= n).any():
+                    contour |= ndimage.binary_dilation(color >= n, structure=EIGHT, iterations=2)
+                found.append((skel, strength, width, color))
+            del maps, liny
+            # pass 2: a contour is also a weak ridge in some region color's map (a
+            # dark contour looks a bit brown); such duplicates of a line already
+            # classified as outline must not be drawn as brown. Then draw.
+            for skel, strength, width, color in found:
+                comp, nc = ndimage.label(skel & (color >= 0) & (color < n), structure=EIGHT)
+                if nc:
+                    dup = ndimage.mean(contour, comp, np.arange(1, nc + 1)) > 0.6
+                    color[np.concatenate([[False], dup])[comp]] = -1
+                s = ndimage.maximum_filter(strength, size=7)
+                for c in np.unique(color[skel]):
+                    if c < 0 or (c >= n and not keep_outline):
+                        continue
+                    m = thicken(color == c, width)
+                    hit = m & (s > best)
+                    best[hit] = s[hit]
+                    labels[hit] = min(int(c), n)
+                    drawn[c] += int((color == c).sum())
+            print("line centerline pixels drawn per color: "
+                  + ", ".join(f"{c}: {d}" for c, d in enumerate(drawn.tolist())), flush=True)
+            if debug_dir:
+                _save_indexed(labels, all_colors, os.path.join(debug_dir, "lines.png"))
+        else:
+            del alpha, lab_s
+
+    # 6. small areas take the dominant surrounding color; on the knot-grid
+    #    path 1px bumps/notches are smoothed too (not on a real loom grid: that
+    #    erases the corners of 1-knot diagonal staircases)
     if min_area and min_area > 1:
         fixed = remove_islands(labels, n_used, min_area)
-        bumps = smooth_bumps(labels, n_used)
-        fixed += remove_islands(labels, n_used, min_area)
+        bumps = 0
+        if not down:
+            bumps = smooth_bumps(labels, n_used)
+            fixed += remove_islands(labels, n_used, min_area)
         print(f"islands cleaned: {fixed} px repainted (min area {min_area}), "
               f"bumps smoothed: {bumps} px")
 
-    # 7. save 8-bit palette TIFF, no compression
+    # 7. save 8-bit palette TIFF or BMP, no compression. Like Texcelle's own
+    #    files: index 0 is black and unused (yarns start at 1) and the
+    #    resolution fields hold points per meter (397 x 500 -> "397 x 500 dpi").
     out_palette = palette
     if keep_outline:
         out_palette = np.concatenate([palette, np.round(outline.mean(0))[None, :].astype(np.uint8)])
-    pal = Image.fromarray(labels, "P")
-    flat_palette = out_palette.ravel().tolist()
+    pal = Image.fromarray(labels + 1, "P")
+    flat_palette = [0, 0, 0] + out_palette.ravel().tolist()
     pal.putpalette(flat_palette + [0] * (768 - len(flat_palette)))
-    pal.save(dst, format="TIFF", compression=None)
+    dpi = (float(ppm_x), float(ppm_y))
+    if fmt == "bmp":
+        pal.save(dst, format="BMP", dpi=dpi)
+    else:
+        pal.save(dst, format="TIFF", compression=None, dpi=dpi)
 
-    # palette text: index -> RGB
+    # palette text: index -> RGB (index 0 is reserved, not listed)
     txt = os.path.splitext(dst)[0] + "_palette.txt"
     counts = np.bincount(labels.ravel(), minlength=n_used)
     with open(txt, "w") as f:
-        for i, (r, g, b) in enumerate(out_palette.tolist()):
+        for i, (r, g, b) in enumerate(out_palette.tolist(), start=1):
             f.write(f"{i}\t{r}\t{g}\t{b}\t#{r:02X}{g:02X}{b:02X}\n")
 
-    print(f"{dst}: {px_w} x {px_h} px, {n_used} colors")
+    print(f"{dst}: {px_w} x {px_h} px, {n_used} colors (indices 1-{n_used}, 0 unused)")
     for i, (r, g, b) in enumerate(out_palette.tolist()):
-        print(f"  {i}  #{r:02X}{g:02X}{b:02X}  {100.0 * counts[i] / labels.size:5.1f}%")
+        print(f"  {i + 1}  #{r:02X}{g:02X}{b:02X}  {100.0 * counts[i] / labels.size:5.1f}%")
     print(f"palette: {txt}")
+
+
+# output format -> file extensions (the first one is used for the default name)
+FORMATS = {"tiff": (".tiff", ".tif"), "bmp": (".bmp",)}
 
 
 def main():
     p = argparse.ArgumentParser()
     p.add_argument("src")
-    p.add_argument("--out", default=None, help="output .tiff (default: <src>.tiff)")
+    p.add_argument("--out", default=None,
+                   help="output file (default: <src>.tiff or <src>.bmp, see --format)")
+    p.add_argument("--format", choices=sorted(FORMATS), default=None,
+                   help="output format: tiff or bmp, both 8-bit indexed and uncompressed "
+                        "(default: from the --out extension, else tiff)")
     p.add_argument("--width", type=float, required=True, help="carpet width cm")
     p.add_argument("--height", type=float, required=True, help="carpet height cm")
-    p.add_argument("--points", type=float, help="points per m^2")
-    p.add_argument("--reed", type=float, help="horizontal points per meter")
-    p.add_argument("--density", type=float, help="vertical points per meter")
+    p.add_argument("--reed", type=float,
+                   help="loom quality: horizontal points per meter (e.g. 397)")
+    p.add_argument("--density", type=float,
+                   help="loom quality: vertical rows per meter (e.g. 500 = 50 per 10 cm)")
+    p.add_argument("--points", type=float,
+                   help="points per m^2 for a square quality (instead of --reed/--density)")
+    p.add_argument("--grid", default=None,
+                   help="exact knot grid WxH (e.g. 793x1501) to match an existing Texcelle "
+                        "file; --reed/--density then only fill the file header")
+    p.add_argument("--fit", choices=["crop", "stretch"], default=None,
+                   help="when the image and carpet aspect ratios differ: crop the image "
+                        "center to the carpet ratio, or stretch it (default: error)")
     p.add_argument("--colors", type=int, default=8,
                    help="max number of yarns (5/6/8/12); near-identical colors are merged")
     p.add_argument("--palette", default=None,
@@ -742,8 +882,9 @@ def main():
                    help="disable line detection (pure region labeling)")
     p.add_argument("--merge", type=float, default=12.0,
                    help="merge auto colors closer than this delta E (default 12)")
-    p.add_argument("--min-area", type=int, default=20,
-                   help="areas smaller than this many px take the surrounding color (0=off)")
+    p.add_argument("--min-area", type=int, default=None,
+                   help="areas smaller than this many knots take the surrounding color "
+                        "(0=off; default 20 mm^2: 20 knots at 1M/m^2, 4 at 397x500)")
     p.add_argument("--denoise", type=int, default=0,
                    help="median filter size on source image (0=off; breaks 1px lines)")
     p.add_argument("--no-rotate", action="store_true",
@@ -752,15 +893,32 @@ def main():
                    help="write regions.png / lines.png (intermediate label maps) here")
     a = p.parse_args()
 
+    grid = None
+    if a.grid:
+        try:
+            grid = tuple(int(v) for v in a.grid.lower().split("x"))
+            assert len(grid) == 2 and min(grid) > 0
+        except (ValueError, AssertionError):
+            p.error("--grid must be WxH, e.g. 793x1501")
+    if not grid and not a.points and not (a.reed and a.density):
+        p.error("give --reed and --density, --points, or --grid")
     palette = parse_palette(a.palette) if a.palette else None
     if a.outline in ("auto", "none", ""):
         outline = "auto" if a.outline == "auto" else None
     else:
         outline = parse_palette(a.outline)
-    out = a.out or os.path.splitext(a.src)[0] + ".tiff"
+    ext_fmt = None
+    if a.out:
+        ext = os.path.splitext(a.out)[1].lower()
+        ext_fmt = next((f for f, exts in FORMATS.items() if ext in exts), None)
+    fmt = a.format or ext_fmt or "tiff"
+    if a.out and ext_fmt not in (None, fmt):
+        p.error(f"--out extension {os.path.splitext(a.out)[1]} does not match --format {fmt}")
+    out = a.out or os.path.splitext(a.src)[0] + FORMATS[fmt][0]
     convert(a.src, out, a.width, a.height, a.colors, a.points, a.reed, a.density,
             palette, a.merge, a.min_area, a.denoise, not a.no_rotate,
-            outline, a.outline_mode, a.line_width, not a.no_lines, a.debug_dir)
+            outline, a.outline_mode, a.line_width, not a.no_lines, a.debug_dir, fmt,
+            grid, a.fit)
 
 
 if __name__ == "__main__":
