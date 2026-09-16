@@ -4,3 +4,6 @@ data/*
 *.pyc
 __pycache__/
 *jpeg
+.venv/
+*.egg-info/
+.pytest_cache/
