@@ -3,17 +3,20 @@
 The source (a flat-colored render, 2:3, ideally 2 px per knot) is finer than
 the knot grid, so every knot takes the yarn covering most of its area:
 
-  1. rotate to the carpet orientation, detect mirror symmetry and centre its
-     axis, check the aspect ratio (--fit crop / stretch otherwise)
+  1. rotate to the carpet orientation, find the mirror axes (also off
+     centre) and crop so they are the centre, check the aspect ratio (--fit
+     crop / stretch otherwise; centring an off-centre axis changes the ratio)
   2. optional median denoise at source resolution (off by default)
   3. yarn palette: --palette, or k-means in Lab on flat pixels
   4. unmix every source pixel into coverage fractions of at most two yarns
      (a blurred edge is "60% brown / 40% cream", not a wrong in-between color);
      only colors found nearby may mix; thin strips of an in-between color are
      unmixed into their neighbours
-  5. area-average the fractions onto the knots (symmetric halves averaged with
-     their mirror), argmax; straight half-covered runs are decided as a whole
+  5. area-average the fractions onto the knots (halves that match everywhere
+     are averaged with their mirror), argmax; straight half-covered runs are
+     decided as a whole
   6. cleanup: islands below --min-area, optional --specks, exact mirror copy
+     of the left/top half onto the other
   7. save indexed TIFF/BMP (index 0 unused, reed/density in the header) and
      the palette text file
 """
@@ -50,7 +53,7 @@ def convert(src, dst, opts: Options):
     img = Image.open(src).convert("RGB")
     if opts.rotate:
         img = rotate_to_carpet(img, opts.width_cm, opts.height_cm)
-    img, sym_lr, sym_tb = find_and_centre(img, opts.symmetry)
+    img, copy_lr, copy_tb, avg_lr, avg_tb = find_and_centre(img, opts.symmetry)
     img = fit_to_carpet(img, opts.width_cm, opts.height_cm, px_w, px_h, opts.fit)
     sx, sy, scale = source_scale(img, px_w, px_h)
     print(f"knot grid {px_w} x {px_h} ({ppm_x:.0f} x {ppm_y:.0f} points/m, knot "
@@ -81,7 +84,7 @@ def convert(src, dst, opts: Options):
     del lab_s
 
     # 5. one yarn per knot
-    labels = vote_knots(alpha, (px_w, px_h), sym_lr, sym_tb)
+    labels = vote_knots(alpha, (px_w, px_h), avg_lr, avg_tb)
     del alpha
     if opts.debug_dir:
         os.makedirs(opts.debug_dir, exist_ok=True)
@@ -97,8 +100,8 @@ def convert(src, dst, opts: Options):
         if min_area > 1:
             remove_islands(labels, n, min_area)
         print(f"shading specks: {repainted} knots repainted (below {opts.specks} knots)")
-    if sym_lr or sym_tb:
-        mirror_copy(labels, sym_lr, sym_tb)
+    if copy_lr or copy_tb:
+        mirror_copy(labels, copy_lr, copy_tb)
 
     # 7. files
     save_indexed(labels, palette, dst, opts.fmt, (ppm_x, ppm_y))

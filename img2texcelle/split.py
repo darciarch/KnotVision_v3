@@ -1,4 +1,4 @@
-"""Split a design image into 2 or 4 exactly equal parts.
+"""Split a design image into 2 or 4 parts on its mirror axes.
 
     python -m img2texcelle.split design.jpg --parts 2 --axis lr     # left / right
     python -m img2texcelle.split design.jpg --parts 2 --axis tb     # top / bottom
@@ -9,22 +9,24 @@ Mirror-symmetric designs only need one half or quarter, so this writes the
 parts as lossless PNG into data/cropped_images/<stem>/<stem>_<part>.png, one
 folder per source image. A later run on the same image adds to that folder
 and never overwrites: <stem>_<part>_2.png, _3, ... The source image stays
-where it is. When a side has an odd number of pixels the middle
-column/row goes into both parts, so the parts always have the same size.
+where it is.
 
-The cut is at the geometric centre. A render whose mirror axis is a few px
-off centre gives parts that are not exact mirrors of each other; --symmetric
-finds the real axis (symmetry.find_axis_shift) and crops the image so the
-axis is the centre before cutting, --shift DX,DY sets that crop by hand.
+The cut is at the geometric centre; when a side has an odd number of pixels
+the middle column/row goes into both parts, so the parts have the same size.
+A design whose mirror axis is off centre (a medallion drawn above the middle)
+needs --symmetric: the real axis of every cut axis is found with
+`symmetry.measure_axis` and the cut is made there, so each part runs from
+the axis to its own edge (a part is complete, nothing is cropped, but the
+two parts then differ in size). A pixel row/column on the axis goes into
+both parts. --shift DX,DY sets the axis by hand.
 """
 
 import argparse
-import math
 from pathlib import Path
 
 from PIL import Image
 
-from .symmetry import crop_to_axis, find_axis_shift
+from .symmetry import AXIS_CONTRAST, AXIS_NAMES, describe_axis, measure_axis
 from .workspace import data_dir
 
 PART_NAMES = {
@@ -33,8 +35,6 @@ PART_NAMES = {
     (4, None): ["tl", "tr", "bl", "br"],
 }
 OUT_DIR_NAME = "cropped_images"
-AXIS_NAMES = {1: "left/right", 0: "top/bottom"}
-ASYMMETRIC = 0.35  # find_axis_shift quality above which an axis is not trusted
 
 
 def part_names(parts, axis):
@@ -48,22 +48,36 @@ def part_names(parts, axis):
     return list(PART_NAMES[(parts, axis)])
 
 
-def half(n):
-    """Size of one half of `n` pixels: n/2, or (n+1)/2 when n is odd (the
-    middle pixel then belongs to both halves)."""
-    return math.ceil(n / 2)
+def cut_ranges(size, shift=0):
+    """Index ranges (first, second) of the two parts along one side of `size`
+    px, cut at the mirror axis (size - 1 + shift) / 2 (`measure_axis`
+    convention; shift 0 = the geometric centre). When the axis lies on a
+    pixel (size - 1 + shift even) that pixel belongs to both parts."""
+    twice = size - 1 + shift  # 2 x axis position
+    if twice % 2 == 0:
+        mid = twice // 2
+        return (0, mid + 1), (mid, size)
+    cut = (twice + 1) // 2
+    return (0, cut), (cut, size)
 
 
-def split_boxes(width, height, parts, axis=None):
-    """PIL crop boxes (left, top, right, bottom) per part name."""
+def shared_pixel(size, shift=0):
+    """True when the axis lies on a pixel that goes into both parts."""
+    return (size - 1 + shift) % 2 == 0
+
+
+def split_boxes(width, height, parts, axis=None, shifts=None):
+    """PIL crop boxes (left, top, right, bottom) per part name. `shifts` =
+    {1: dx, 0: dy} moves the cut off the centre (see `cut_ranges`)."""
     names = part_names(parts, axis)
-    hw, hh = half(width), half(height)
-    x_ranges = {"l": (0, hw), "r": (width - hw, width)}
-    y_ranges = {"t": (0, hh), "b": (height - hh, height)}
+    shifts = shifts or {}
+    (xl, xr) = cut_ranges(width, shifts.get(1, 0))
+    (yt, yb) = cut_ranges(height, shifts.get(0, 0))
+    x_ranges, y_ranges = {"l": xl, "r": xr}, {"t": yt, "b": yb}
     if parts == 2 and axis == "lr":
-        return {"left": (0, 0, hw, height), "right": (width - hw, 0, width, height)}
+        return {"left": (xl[0], 0, xl[1], height), "right": (xr[0], 0, xr[1], height)}
     if parts == 2:
-        return {"top": (0, 0, width, hh), "bottom": (0, height - hh, width, height)}
+        return {"top": (0, yt[0], width, yt[1]), "bottom": (0, yb[0], width, yb[1])}
     boxes = {}
     for name in names:  # "tl", "tr", "bl", "br"
         y0, y1 = y_ranges[name[0]]
@@ -82,9 +96,9 @@ def check_keep(keep, names):
     return [n for n in names if n in keep]  # canonical order, no duplicates
 
 
-def split_image(img, parts, axis=None, keep=None):
+def split_image(img, parts, axis=None, keep=None, shifts=None):
     """Return {part name: cropped Image} for the requested parts."""
-    boxes = split_boxes(img.width, img.height, parts, axis)
+    boxes = split_boxes(img.width, img.height, parts, axis, shifts)
     wanted = check_keep(keep, list(boxes))
     return {name: img.crop(boxes[name]) for name in wanted}
 
@@ -96,36 +110,39 @@ def cut_axes(parts, axis):
     return [1] if axis == "lr" else [0]
 
 
-def centre_on_axis(img, parts, axis=None, symmetric=False, shift=None):
-    """Crop `img` so its real mirror axis (per cut axis) is the centre.
+def find_cuts(img, parts, axis=None, symmetric=False, shift=None):
+    """Where to cut: {numpy axis: shift} for the cut axes (`measure_axis`
+    convention, positive = axis right/down of the centre).
 
-    `shift` = (dx, dy) px sets the axis by hand (positive = axis right/down
-    of the centre, the `detect_symmetry` convention); otherwise, with
-    `symmetric`, it is found with `find_axis_shift`; an axis whose mirror
-    error is above ASYMMETRIC is not trusted and stays at the centre (a
-    warning is printed). Axes the cut does not mirror are left alone.
-    Returns (img, {axis: shift}).
+    `shift` = (dx, dy) px sets the axes by hand; otherwise, with `symmetric`,
+    each cut axis is measured with `measure_axis`; an axis whose contrast is
+    above AXIS_CONTRAST is not trusted and stays at the centre (a warning
+    names the best candidate and the --shift that forces it). Without either
+    flag the cut is at the centre ({}).
     """
     if not symmetric and shift is None:
-        return img, {}
+        return {}
     found = {}
     for ax in cut_axes(parts, axis):
+        size = img.size[0] if ax == 1 else img.size[1]
         if shift is not None:
             d = int(shift[0] if ax == 1 else shift[1])
+            print(f"symmetry: {AXIS_NAMES[ax]} axis {describe_axis(ax, size, d)} (--shift)",
+                  flush=True)
         else:
-            d, quality = find_axis_shift(img, ax)
-            if quality > ASYMMETRIC:
-                print(f"warning: the image does not look mirror-symmetric {AXIS_NAMES[ax]} "
-                      f"(error ratio {quality:.2f}); cutting at the centre", flush=True)
+            d, contrast, _ = measure_axis(img, ax)
+            where = describe_axis(ax, size, d)
+            if contrast > AXIS_CONTRAST:
+                force = f"--shift {d},0" if ax == 1 else f"--shift 0,{d}"
+                print(f"warning: no clear {AXIS_NAMES[ax]} mirror axis (contrast {contrast:.2f} "
+                      f"> {AXIS_CONTRAST}); best candidate {where}; cutting at the centre, "
+                      f"use {force} to force that axis", flush=True)
                 d = 0
+            else:
+                print(f"symmetry: {AXIS_NAMES[ax]} axis {where}, contrast {contrast:.2f}",
+                      flush=True)
         found[ax] = d
-        print(f"symmetry: {AXIS_NAMES[ax]} axis "
-              + (f"off centre by {d / 2:g} px" if d else "at the centre"), flush=True)
-    if any(found.values()):
-        img = crop_to_axis(img, found.get(1, 0), found.get(0, 0))
-        print(f"image cropped to {img.width}x{img.height} to centre the mirror axis",
-              flush=True)
-    return img, found
+    return found
 
 
 def output_dir(stem, root=None):
@@ -146,18 +163,19 @@ def free_path(out_dir, stem, name):
 
 def split_file(src, parts, axis=None, keep=None, root=None, symmetric=False, shift=None):
     """Split image file `src` and write the parts as PNG. Returns the paths.
-    `symmetric` / `shift`: see `centre_on_axis`."""
+    `symmetric` / `shift`: see `find_cuts`."""
     src = Path(src).resolve()
     if not src.is_file():
         raise SystemExit(f"ERROR: source image not found: {src}")
     img = Image.open(src)
     img = img.convert("RGBA" if img.mode in ("RGBA", "LA", "PA") else "RGB")
-    img, _ = centre_on_axis(img, parts, axis, symmetric, shift)
-    odd = [ax for ax, n in (("width", img.width), ("height", img.height)) if n % 2]
-    if odd:
-        print(f"warning: odd {' and '.join(odd)} ({img.width}x{img.height}); the middle "
-              "pixel row/column is included in both parts", flush=True)
-    pieces = split_image(img, parts, axis, keep)
+    shifts = find_cuts(img, parts, axis, symmetric, shift)
+    shared = [("column" if ax == 1 else "row") for ax in cut_axes(parts, axis)
+              if shared_pixel(img.size[0] if ax == 1 else img.size[1], shifts.get(ax, 0))]
+    if shared:
+        print(f"warning: the axis lies on a pixel {' and '.join(shared)} "
+              f"({img.width}x{img.height}); it is included in both parts", flush=True)
+    pieces = split_image(img, parts, axis, keep, shifts)
     out_dir = output_dir(src.stem, root)
     out_dir.mkdir(parents=True, exist_ok=True)
     written = []
@@ -171,10 +189,12 @@ def split_file(src, parts, axis=None, keep=None, root=None, symmetric=False, shi
 def build_parser():
     p = argparse.ArgumentParser(
         prog="img2texcelle.split",
-        description="Split a design image into 2 or 4 exactly equal parts, written as "
-                    "PNG into data/cropped_images/<name>/<name>_<part>.png (one folder per "
+        description="Split a design image into 2 halves or 4 quarters, written as PNG "
+                    "into data/cropped_images/<name>/<name>_<part>.png (one folder per "
                     "image, later runs add to it, nothing is overwritten). The source "
-                    "is not moved. An odd side puts its middle pixel into both parts.")
+                    "is not moved. The cut is at the centre unless --symmetric / --shift "
+                    "put it on the real mirror axis; a pixel row/column on the axis goes "
+                    "into both parts.")
     p.add_argument("src", help="design image (jpg/png)")
     p.add_argument("--parts", type=int, choices=[2, 4], required=True,
                    help="2 halves or 4 quarters")
@@ -185,13 +205,14 @@ def build_parser():
                    help="comma-separated parts to save (default all): left,right / "
                         "top,bottom for 2 parts; tl,tr,bl,br for 4 parts (e.g. --keep tl)")
     p.add_argument("--symmetric", action="store_true",
-                   help="find the real mirror axis of the design and crop the image so it "
-                        "is the centre before cutting, so the parts are exact mirrors "
-                        "of each other (a few px are dropped on one side)")
+                   help="find the real mirror axis of the design (also well off centre, "
+                        "e.g. a medallion drawn above the middle) and cut there: each "
+                        "part runs from the axis to its own edge, so the parts differ "
+                        "in size when the axis is off centre, and nothing is cropped")
     p.add_argument("--shift", default=None, metavar="DX,DY",
-                   help="set the mirror-axis offset by hand instead of --symmetric: the "
-                        "axis is DX/2 px right and DY/2 px down of the centre (negative = "
-                        "left/up), e.g. --shift 6,0 for an axis 3 px right of centre")
+                   help="set the mirror axis by hand instead of --symmetric: the axis is "
+                        "DX/2 px right and DY/2 px down of the centre (negative = left/up), "
+                        "e.g. --shift 0,-256 for an axis 128 px above the centre")
     return p
 
 

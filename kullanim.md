@@ -191,8 +191,9 @@ sürer.
 ## 6. Deseni eş parçalara bölme (`img2texcelle.split`)
 
 Ayna simetrik bir desende yalnızca bir yarı ya da bir çeyrek üzerinde çalışmak
-yeter. `img2texcelle.split`, bir resmi **birebir eş** 2 veya 4 parçaya böler ve
-parçaları kayıpsız PNG olarak kaydeder. Dönüştürme yapmaz; sadece keser.
+yeter. `img2texcelle.split`, bir resmi ortadan ya da (`--symmetric` ile) gerçek
+ayna ekseninden 2 veya 4 parçaya böler ve parçaları kayıpsız PNG olarak
+kaydeder. Dönüştürme yapmaz; sadece keser.
 
 ```bash
 # sol / sağ yarılar (dikey kesik)
@@ -210,11 +211,11 @@ parçaları kayıpsız PNG olarak kaydeder. Dönüştürme yapmaz; sadece keser.
 # yalnızca sol yarıyı kaydet
 .venv/bin/python -m img2texcelle.split desen.jpg --parts 2 --axis lr --keep left
 
-# ayna ekseni tam ortada olmayan bir desen: gerçek ekseni bul, ona göre böl
-.venv/bin/python -m img2texcelle.split desen.jpg --parts 2 --axis lr --symmetric
+# ayna ekseni ortada olmayan bir desen (madalyon yukarıda): gerçek ekseni bul, oradan kes
+.venv/bin/python -m img2texcelle.split desen.jpg --parts 2 --axis tb --symmetric
 
-# ekseni elle ver: eksen merkezin 3 px sağında (DX = 2 x 3 = 6), dikeyde ortada
-.venv/bin/python -m img2texcelle.split desen.jpg --parts 4 --shift 6,0
+# ekseni elle ver: eksen merkezin 128 px üstünde (DY = -2 x 128 = -256), yatayda ortada
+.venv/bin/python -m img2texcelle.split desen.jpg --parts 4 --shift 0,-256
 ```
 
 | Seçenek | Açıklama |
@@ -223,8 +224,8 @@ parçaları kayıpsız PNG olarak kaydeder. Dönüştürme yapmaz; sadece keser.
 | `--parts 2` / `--parts 4` | İki yarı ya da dört çeyrek. Zorunlu. |
 | `--axis lr` / `--axis tb` | Yalnızca `--parts 2` için zorunlu: `lr` = sol/sağ, `tb` = üst/alt. `--parts 4` ile verilmez. |
 | `--keep a,b` | Kaydedilecek parçalar, virgülle. Verilmezse hepsi. |
-| `--symmetric` | Kesilecek eksen(ler)de desenin **gerçek ayna eksenini** bulur ve resmi, eksen tam ortaya gelecek şekilde bir kenardan kırpar; sonra böler. Parçalar böylece birbirinin birebir aynası olur. Verilmezse resim geometrik ortadan kesilir (eski davranış). |
-| `--shift DX,DY` | Ekseni elle verir (`--symmetric` gerekmez): eksen merkezin DX/2 px sağında ve DY/2 px altındadır; eksi değer sol/üst. Örn. eksen 3 px solda ise `--shift -6,0`. Kesilmeyen eksenin değeri yok sayılır. |
+| `--symmetric` | Kesilecek eksen(ler)de desenin **gerçek ayna eksenini** ölçer (ana araçla aynı ölçüm, bkz. bölüm 10 adım 1; merkezden ±%25 uzağa kadar arar) ve resmi oradan keser. Her parça eksenden kendi kenarına kadar uzanır: hiçbir şey kırpılmaz, ama eksen ortada değilse parçaların boyu farklı olur (fom: üst 3392×2400, alt 3392×2656). Eksen bir pikselin üstüne denk gelirse o satır/sütun iki parçaya da girer. Eksen net değilse (kontrast > 0,7) uyarı verilir, en iyi aday ve onu zorlayan `--shift` değeri yazılır, kesik ortada kalır. Verilmezse resim geometrik ortadan kesilir. |
+| `--shift DX,DY` | Ekseni elle verir (`--symmetric` gerekmez): eksen merkezin DX/2 px sağında ve DY/2 px altındadır; eksi değer sol/üst. Örn. eksen 128 px yukarıdaysa `--shift 0,-256`. Kesilmeyen eksenin değeri yok sayılır. |
 
 Parça adları:
 
@@ -247,13 +248,14 @@ Kurallar:
    render'ın çeyreği 848×1264'tür ve 2:3 oranını korur; örneğin
    `--width 100 --height 150 --reed 397 --density 500` ile dönüştürülebilir.
    Ana araç bu parçayı her zamanki gibi `data/<parça adı>/` içine taşır.
-4. `--symmetric` ile eksen ortada değilse bir kenardan birkaç px atılır;
-   kayma ve kırpılmış boyut ekrana yazılır (`symmetry: left/right axis off
-   centre by 2.5 px`, `image cropped to 1787x2390 ...`). Eksen simetrik
-   görünmüyorsa (ör. yalnızca sol/sağ simetrik bir desende `--parts 4`) o
-   eksen için uyarı verilir ve ortadan kesilir, kırpma yapılmaz. Kırpma en/boy
-   oranını %2'den fazla değiştirirse dönüştürmede `--fit crop` gerekebilir.
-   Not: `--symmetric` yalnızca **eksenin yerini** düzeltir; Gemini iki yarıyı
+5. `--symmetric` ile eksenin yeri ekrana yazılır (`symmetry: top/bottom axis
+   at row 2399.5 (128 px above the centre), contrast 0.57`). Eksen ortada
+   değilse parçalar farklı boyda çıkar; her parça eksiksizdir ve tek başına
+   aynalanınca tam halıyı verir. Eksen net değilse (ör. yalnızca sol/sağ
+   simetrik bir desende `--parts 4`) o eksen için uyarı verilir ve ortadan
+   kesilir. Farklı boydaki parça ana araca verilirken en/boy oranı halıyla
+   uyuşmayabilir; o zaman `--fit` gerekir.
+   Not: `--symmetric` yalnızca **eksenin yerini** bulur; Gemini iki yarıyı
    biraz farklı çizdiyse (motifler birebir aynı değilse) parçalar yine farklı
    olur. Bunu dönüştürme aşaması çözer (`--symmetry`, bkz. bölüm 8).
 
@@ -322,14 +324,19 @@ Araç yalnızca şu şartları sağlayan görüntülerle doğru çalışır:
 
 | Seçenek | Varsayılan | Açıklama |
 |---|---|---|
-| `--symmetry auto` | auto | Görüntüden ayna simetrisi tespit edilir. |
+| `--symmetry auto` | auto | Görüntüden ayna eksenleri ölçülür (ortada olmayan eksen de bulunur). |
 | `--symmetry none` | | Simetri işlemleri kapalı. |
-| `--symmetry lr` | | Sol/sağ simetri zorlanır. |
+| `--symmetry lr` | | Sol/sağ simetri zorlanır (ölçülen eksen yerinde). |
 | `--symmetry tb` | | Üst/alt simetri zorlanır. |
 | `--symmetry both` | | Her iki eksen zorlanır. |
 
-Simetrik eksende iki yarı birlikte karar verilir ve sol/üst yarı sağ/alt
-yarıya kopyalanır; karşılıklı motifler birebir aynı olur.
+Simetrik eksende sol/üst yarı sağ/alt yarıya kopyalanır; karşılıklı motifler
+birebir aynı olur. İki yarı her yerde eşleşiyorsa (gerçek tasarım, Gemini
+sol/sağ) oy adımında iki yarı birlikte karar verilir; yalnızca eksen yakınında
+eşleşiyorsa (fom üst/alt: madalyon aynı, taçlar farklı) yalnızca kopyalanır.
+Eksen ortada değilse resim eksen ortaya gelecek şekilde kırpılır; bu en/boy
+oranını bozabilir ve `--fit stretch` ya da `--fit crop` gerekir (fom:
+3392×4800 olur).
 
 ### Çıktı
 
@@ -387,23 +394,33 @@ yedi adım gerekir. Sıra önemlidir.
 
 1. **Döndürme:** Görüntü yatay, halı dikeyse (veya tersi) görüntü 90°
    döndürülür. `--no-rotate` ile kapatılır.
-2. **Simetri tespiti:** Görüntü gri tona çevrilip 1/4 boyuta küçültülür ve
-   aynadaki görüntüsüyle karşılaştırılır (boyutun ±%2'si içinde en iyi kayma
-   aranır). Fark, görüntünün 8 piksel kaydırılmış haliyle olan farkın
-   0,35 katından küçükse o eksen simetrik sayılır. Ölçülen değerler: Gemini
-   render'larında sol/sağ 0,07–0,27 (simetrik), üst/alt 0,76–0,94 (değil);
-   gerçek tasarımda her iki yönde 0,00–0,02.
-3. **Ekseni ortalama:** Simetri ekseni tam ortada değilse tam çözünürlükte
-   incelenir ve görüntü, eksen düğüm ızgarasının tam ortasına gelecek şekilde
-   kesilir.
+2. **Eksen ölçümü** (`symmetry.measure_axis`, `img2texcelle.split --symmetric`
+   ile ortak): Görüntü gri tona çevrilip en çok 8 kat küçültülür ve merkezden
+   ±%25 uzağa kadar her eksen adayı denenir. Karşılaştırma yalnızca adayın
+   ±%15 (boyutun) çevresindeki satırlarla yapılır: kesikte buluşan satırlar.
+   Bordür ve uzak motifler sayılmaz; fom'da taçlar ayna konumlarından 100+ px
+   uzağa çizilmiştir, bütün görüntüyle karşılaştıran eski ölçüm bu yüzden
+   ekseni hiç bulamıyordu. En iyi aday tam çözünürlükte inceltilir. İki sayı
+   çıkar: **kontrast** = en iyi eksendeki hata / 32 px'den uzaktaki en iyi
+   hata (0 = kusursuz ayna, 1 = eksen yok). 0,7'nin altındaysa eksen kabul
+   edilir. Ölçülen (2026-09-17): gerçek tasarım 0,00; WhatsApp taraması 0,16;
+   fom sol/sağ 0,12, üst/alt **0,57** (madalyon merkezden 128 px yukarıda);
+   simetrisiz Gemini çeyrek render'ları 0,79–0,99. **eşleşme** = o eksende
+   bütün görüntünün hatası / 32 px kaydırma hatası (eski ölçüt): 0,35'in
+   altındaysa iki yarı her yerde eşleşir (gerçek tasarım 0,00–0,02, Gemini
+   sol/sağ 0,07–0,27), değilse yalnızca eksen yakınında (fom üst/alt 1,12).
+3. **Ekseni ortalama:** Eksen ortada değilse görüntü, eksen düğüm ızgarasının
+   tam ortasına gelecek şekilde kırpılır (fom: 3392×4800; oran kontrolü için
+   `--fit` gerekir). Zorlanan bir eksen (`--symmetry lr/tb/both`) de ölçülen
+   yerinde kullanılır; net değilse uyarıyla ortada kalır.
 4. **Oran kontrolü:** Görüntü oranı, halının cm oranıyla veya düğüm ızgarası
    oranıyla %2 içinde uyuşmalı. Uyuşmazsa `--fit` gerekir, yoksa hata.
 5. **Ölçek kontrolü:** `scale = sqrt(sx*sy)` (düğüm başına kaynak pikseli)
    1'den büyük olmalı, yoksa hata.
 
-**Dikkat:** Neredeyse simetrik bir desende de eksen tespit edilir ve sadece bir
-tarafta olan bir motif ortalanarak kaybolur. Böyle bir durumda `--symmetry lr`
-veya `--symmetry none` ile elle belirleyin.
+**Dikkat:** Eksen bulunan bir desende sadece bir tarafta olan motif kopyada
+kaybolur. Böyle bir durumda `--symmetry none` ya da yalnızca doğru ekseni
+(`--symmetry lr` / `tb`) verin.
 
 ### Adım 2 – İsteğe bağlı medyan gürültü giderme
 
@@ -458,8 +475,10 @@ Bu adım, aracın kalbidir.
    küçültülür. BOX, tam alan ortalamasıdır: her düğüm, alanının her iplik
    tarafından ne kadarının kaplandığını tutar ("yumuşak" kaplama). Bilinear
    yöntem 2 piksellik çizgileri aralıklarına bulaştırıyordu.
-2. **Ayna ortalaması:** Simetrik eksenlerde kaplama haritası aynadaki haliyle
-   ortalanır; iki yarı aynı kanıttan karar verilir.
+2. **Ayna ortalaması:** İki yarısı her yerde eşleşen eksenlerde (eşleşme <
+   0,35) kaplama haritası aynadaki haliyle ortalanır; iki yarı aynı kanıttan
+   karar verilir. Yalnızca eksen yakınında eşleşen bir eksende (fom üst/alt)
+   ortalama yapılmaz: farklı çizilmiş iki taç üst üste binerdi.
 3. **Argmax:** Her düğüm en çok kaplayan ipliği alır. Bu yumuşak kaplama,
    piksel etiketlerinin çoğunluğundan ("sert") daha iyidir: gidiş-dönüşte
    %98,8'e karşı %98,2 (2 px/düğüm), %99,3'e karşı %97,8 (tam sayı olmayan
@@ -599,17 +618,18 @@ img2texcelle/
   workspace.py  data/<isim>/: kaynağı taşı, <isim>[_N].tiff/bmp + _palette.txt seç
   pipeline.py   convert(src, dst, opts): yukarıdaki 7 adım, ~100 satır
   grid.py       düğüm ızgarası + başlık ppm, düğüm boyutu, döndürme/oran, ölçek kontrolü
-  symmetry.py   simetri tespiti, eksen ortalama, ayna ortalaması ve kopyası
+  symmetry.py   eksen ölçümü (measure_axis), eksen ortalama, ayna ortalaması ve kopyası
   color.py      rgb_to_lab, parse_palette, flat_mask, auto_palette (k-means), smooth_chroma
   unmix.py      unmix (iki renk kaplama oranları), blend_pairs, unmix_thin_blends
   vote.py       resize_alpha (BOX), directional_mean, straighten_runs, vote_knots
   cleanup.py    remove_islands, remove_shading_specks
   output.py     save_indexed (TIFF/BMP, indeks 0 ayrılmış, dpi = ppm), write_palette_txt
-  split.py      python -m img2texcelle.split: 2/4 eş parça -> data/cropped_images/<isim>/
+  split.py      python -m img2texcelle.split: ayna ekseninden 2/4 parça -> data/cropped_images/<isim>/
 tests/
   test_smoke.py      sentetik 2:3 desen uçtan uca; kaba kaynak ve oran hatası testleri
   test_workspace.py  data/<isim>/ klasör kuralları (taşıma, _2/_3 adlandırma, çakışma)
-  test_split.py      bölme: eş kutular, tek boyutta orta piksel, ayna eşitliği, --keep, klasör kuralı
+  test_split.py      bölme: kutular, eksendeki piksel, ortada olmayan eksen, --symmetric/--shift, --keep, klasör kuralı
+  test_symmetry.py   measure_axis: ortada / %20 kaymış / yalnızca eksen yakınında simetrik / simetrisiz; find_and_centre modları
 ```
 
 Testleri çalıştırmak için:

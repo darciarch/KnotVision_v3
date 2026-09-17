@@ -4,7 +4,7 @@ import numpy as np
 import pytest
 from PIL import Image
 
-from img2texcelle.split import centre_on_axis, main, split_boxes, split_file, split_image
+from img2texcelle.split import cut_ranges, find_cuts, main, split_boxes, split_file, split_image
 
 
 def mirrored_image(w, h):
@@ -33,7 +33,7 @@ def noisy_mirrored_image(w, h, block=16, seed=0):
 def off_centre_image(w, h, dx, dy):
     """`noisy_mirrored_image(w, h)` with a plain strip of dx px on the right and
     dy px at the bottom, so the mirror axis is dx/2 (dy/2) px left/up of the
-    geometric centre (shift -dx, -dy in the `detect_symmetry` convention)."""
+    geometric centre (shift -dx, -dy in the `measure_axis` convention)."""
     img = Image.new("RGB", (w + dx, h + dy), (200, 90, 30))
     img.paste(noisy_mirrored_image(w, h), (0, 0))
     return img
@@ -124,29 +124,60 @@ def test_main_argument_errors(tmp_path, monkeypatch):
     assert names == ["design_br.png", "design_tl.png"]
 
 
+def test_cut_ranges():
+    assert cut_ranges(8) == ((0, 4), (4, 8))
+    assert cut_ranges(9) == ((0, 5), (4, 9))          # middle pixel in both parts
+    assert cut_ranges(163, -3) == ((0, 80), (80, 163))  # axis at 79.5
+    assert cut_ranges(5056, -256) == ((0, 2400), (2400, 5056))
+    assert cut_ranges(10, 3) == ((0, 7), (6, 10))     # axis at pixel 6
+    assert split_boxes(163, 242, 4, shifts={1: -3, 0: -2}) == {
+        "tl": (0, 0, 80, 120), "tr": (80, 0, 163, 120), "bl": (0, 120, 80, 242), "br": (80, 120, 163, 242)}
+
+
 def test_off_centre_axis_is_not_symmetric_by_default():
     img = off_centre_image(160, 240, 3, 2)
     lr = split_image(img, 2, "lr")
     assert not mirrors(lr["left"], lr["right"], LR)
-    assert centre_on_axis(img, 2, "lr")[0] is img  # no flag: untouched
+    assert find_cuts(img, 2, "lr") == {}  # no flag: cut at the centre
 
 
 @pytest.mark.parametrize("kw", [{"symmetric": True}, {"shift": (-3, -2)}])
-def test_centre_on_axis_makes_exact_mirrors(kw):
-    img = off_centre_image(160, 240, 3, 2)
-    cut, found = centre_on_axis(img, 4, **kw)
-    assert cut.size == (160, 240) and found == {1: -3, 0: -2}
-    q = split_image(cut, 4)
-    assert mirrors(q["tl"], q["tr"], LR) and mirrors(q["tl"], q["bl"], TB)
-    # --axis lr only centres left/right; the extra bottom rows stay
-    cut, found = centre_on_axis(img, 2, "lr", **kw)
-    assert cut.size == (160, 242) and found == {1: -3}
-    lr = split_image(cut, 2, "lr")
-    assert mirrors(lr["left"], lr["right"], LR)
-    cut, found = centre_on_axis(img, 2, "tb", **kw)
-    assert cut.size == (163, 240) and found == {0: -2}
-    tb = split_image(cut, 2, "tb")
-    assert mirrors(tb["top"], tb["bottom"], TB)
+def test_find_cuts_gives_exact_mirrors(kw):
+    img = off_centre_image(160, 240, 3, 2)  # 163 x 242, axes at 79.5 / 119.5
+    found = find_cuts(img, 4, **kw)
+    assert found == {1: -3, 0: -2}
+    q = split_image(img, 4, shifts=found)
+    assert q["tl"].size == (80, 120) and q["br"].size == (83, 122)
+    # the parts are complete (the plain strips stay in the right/bottom parts)
+    # and mirror each other up to the strips
+    assert q["tr"].crop((0, 0, 80, 120)).transpose(LR).tobytes() == q["tl"].tobytes()
+    assert q["bl"].crop((0, 0, 80, 120)).transpose(TB).tobytes() == q["tl"].tobytes()
+    assert q["br"].getpixel((82, 121)) == (200, 90, 30)
+    # --axis lr only cuts left/right
+    found = find_cuts(img, 2, "lr", **kw)
+    assert found == {1: -3}
+    lr = split_image(img, 2, "lr", shifts=found)
+    assert lr["left"].size == (80, 242) and lr["right"].size == (83, 242)
+    assert lr["right"].crop((0, 0, 80, 242)).transpose(LR).tobytes() == lr["left"].tobytes()
+    found = find_cuts(img, 2, "tb", **kw)
+    assert found == {0: -2}
+    tb = split_image(img, 2, "tb", shifts=found)
+    assert tb["top"].size == (163, 120) and tb["bottom"].size == (163, 122)
+    assert tb["bottom"].crop((0, 0, 163, 120)).transpose(TB).tobytes() == tb["top"].tobytes()
+
+
+def test_axis_far_off_centre_is_found():
+    img = off_centre_image(160, 240, 40, 60)  # 20% off centre on both axes
+    assert find_cuts(img, 4, symmetric=True) == {1: -40, 0: -60}
+
+
+def test_no_symmetry_cuts_at_the_centre(capsys):
+    rng = np.random.default_rng(1)
+    img = Image.fromarray(rng.integers(0, 256, (240, 160, 3), dtype=np.uint8))
+    assert find_cuts(img, 4, symmetric=True) == {1: 0, 0: 0}
+    out = capsys.readouterr().out
+    assert out.count("warning: no clear") == 2 and "--shift" in out
+    assert find_cuts(img, 4, shift=(6, -4)) == {1: 6, 0: -4}  # --shift always wins
 
 
 def test_symmetric_flags_from_main(tmp_path, monkeypatch):
@@ -155,10 +186,12 @@ def test_symmetric_flags_from_main(tmp_path, monkeypatch):
     monkeypatch.setattr("img2texcelle.split.data_dir", lambda: tmp_path / "data")
     out = tmp_path / "data" / "cropped_images" / "design"
     main([str(src), "--parts", "2", "--axis", "lr", "--symmetric"])
-    assert mirrors(Image.open(out / "design_left.png"), Image.open(out / "design_right.png"), LR)
+    left, right = Image.open(out / "design_left.png"), Image.open(out / "design_right.png")
+    assert left.size == (80, 242) and right.size == (83, 242)
+    assert right.crop((0, 0, 80, 242)).transpose(LR).tobytes() == left.tobytes()
     main([str(src), "--parts", "4", "--shift", "-3,-2"])
-    assert Image.open(out / "design_tl.png").size == (80, 120)
-    assert mirrors(Image.open(out / "design_tl.png"), Image.open(out / "design_br.png"), LR) is False
-    assert mirrors(Image.open(out / "design_tl.png"), Image.open(out / "design_tr.png"), LR)
+    tl, tr = Image.open(out / "design_tl.png"), Image.open(out / "design_tr.png")
+    assert tl.size == (80, 120) and tr.size == (83, 120)
+    assert tr.crop((0, 0, 80, 120)).transpose(LR).tobytes() == tl.tobytes()
     with pytest.raises(SystemExit):
         main([str(src), "--parts", "4", "--shift", "3"])
