@@ -317,11 +317,24 @@ mod yoktur).
 
 | Seçenek | Varsayılan | Açıklama |
 |---|---|---|
-| `--symmetry auto` | auto | İki ekseni de (sol/sağ ve üst/alt) resimden ölçer, her birine ayrı karar verir: kontrastı 0,7'nin altında olan eksen alınır, üstündeki atlanır. Ortada olmayan eksen de bulunur. |
-| `--symmetry none` | | Simetri işlemi yok, ölçüm de yok. İki yarı ayrı ayrı oylanır. |
-| `--symmetry lr` | | Sol/sağ eksenini **mutlaka** alır (ölçülen yerinde; net değilse ortada). Üst/alt eksenine hiç bakmaz. |
-| `--symmetry tb` | | Üst/alt eksenini mutlaka alır. Sol/sağ eksenine hiç bakmaz. |
-| `--symmetry both` | | İki ekseni de mutlaka alır, her biri ölçülen yerinde. |
+| `--symmetry auto` | auto | İki ekseni de (sol/sağ ve üst/alt) resimden ölçer, her birine ayrı karar verir: kontrastı **0,4'ün altında** olan eksen alınır. 0,4–0,7 arası "belirsiz" sayılır: alınmaz, ama uyarı en iyi adayı, kontrastı ve zorlamak için gereken `--symmetry` bayrağını yazar (fom'un üst/alt ekseni 0,57 böyledir). 0,7 ve üstü simetrik değildir. Ortada olmayan eksen de bulunur. |
+| `--symmetry none` | | Simetri işlemi yok, ölçüm de yok. Tüm ızgara dönüştürülür. |
+| `--symmetry lr` | | Sol/sağ eksenini **mutlaka** alır: kontrast 0,9'un altındaysa ölçülen yerinde, üstündeyse ortada (uyarı basılır). Üst/alt eksenine hiç bakmaz. |
+| `--symmetry tb` | | Üst/alt eksenini mutlaka alır (aynı 0,9 sınırı). Sol/sağ eksenine hiç bakmaz. |
+| `--symmetry both` | | İki ekseni de mutlaka alır, her biri ölçülen yerinde (0,9 sınırı). fom bununla çalıştırılır. |
+| `--no-average` | kapalı | Hiçbir eksende iki yarı birlikte oylanmaz; her eksen yalnız tutulan yarıdan karar verilir. Daha hızlı (fom'da ızgaranın %27'si dönüştürülür, %51 yerine) ama çıktı değişir (fom'da düğümlerin %6,4'ü, gerçek tasarımda %0,5'i). |
+
+Bir eksen alındığında **yalnız tutulan parça** dönüştürülür: kopyalanan
+eksende tutulan yarı artı eksenin ötesinde 20 düğümlük bir pay (payın
+pikselleri tutulan yarının yansımasıdır, atılan yarının gerçek pikselleri
+değil); iki yarısı birlikte oylanan ("average + copy") eksende ise o yönün
+tamamı. Pay, düz kenar kararı (`straighten_runs`), yön ortalaması ve ada
+temizliğinin erişimini karşılar; sonunda atılır ve parça aynalanır. Tek
+sayılı bir ızgarada (79 düğüm) eksen üzerindeki orta düğüm parçaya aittir
+(79 → 40 düğümlük parça); ızgara asla yuvarlanmaz, tezgâhın nokta sayısı
+değişmez. 2026-09-17'de ölçüldü: fom ve gerçek tasarımda parça + pay ile
+üretilen çıktı, tüm resmin dönüştürülmesiyle **düğüm düğüm aynıdır** (0
+fark).
 
 #### Bir eksen alındığında ne olur (her modda aynı)
 
@@ -406,8 +419,8 @@ Kontrast küçükse simetri var, büyükse yok. Sınır 0,7.
 
 | Mod | Alınan eksen | Sonuç |
 |---|---|---|
-| `auto` | sol/sağ (ortada) + üst/alt (2399,5. satır) | iki yönde simetrik; `_10.bmp` (varsayılan), `_11.bmp` (`--stretch`) |
-| `both` | aynı | `auto` ile aynı (iki eksen de net) |
+| `auto` | yalnız sol/sağ (ortada); üst/alt (0,57) "belirsiz" uyarısıyla atlanır | yalnız sol/sağ simetrik |
+| `both` | sol/sağ (ortada) + üst/alt (2399,5. satır) | iki yönde simetrik; `_10.bmp` (varsayılan), `_11.bmp` (`--stretch`), `_14.bmp` (`--no-average`), `_15_part.png` → `assemble` → `_16.bmp` = `_10.bmp` (`--part`) |
 | `lr` | yalnız sol/sağ | üst/alt'a dokunulmaz; `_12.bmp` = `_6.bmp` (`--stretch` ile) |
 | `tb` | yalnız üst/alt | sol ve sağ yarı birebir aynı olmaz |
 | `none` | yok | iki yarı ayrı oylanır, karşılıklı motifler düğüm düğüm farklı olabilir |
@@ -416,10 +429,12 @@ Kontrast küçükse simetri var, büyükse yok. Sınır 0,7.
 
 - Desenin **bir tarafında tek başına** bir motif varsa `none` ya da yalnız
   doğru eksen (`lr` veya `tb`): kopyada o motif silinir.
-- Desen simetrik ama `auto` ekseni bulamıyorsa (kontrast eşiğin üstünde,
-  örneğin çok gürültülü bir tarama) `lr` / `tb` / `both` ile zorlayın.
-  Uyarı çıkarsa eksen ortadan varsayılmış demektir; resmin gerçekten
-  ortadan simetrik olduğundan emin olun.
+- `auto` "belirsiz" uyarısı veriyorsa (kontrast 0,4–0,7; fom'un üst/alt
+  ekseni) ve desen gerçekten simetrikse uyarıdaki bayrakla (`--symmetry tb`
+  ya da `both`) zorlayın; ölçülen eksen kullanılır.
+- Desen simetrik ama kontrast 0,9'un da üstündeyse (çok gürültülü bir
+  tarama) zorlanan mod ekseni ortadan varsayar ve uyarı basar; resmin
+  gerçekten ortadan simetrik olduğundan emin olun.
 - Bunların dışında `auto` yeterlidir.
 
 ### Çıktı
@@ -427,7 +442,8 @@ Kontrast küçükse simetri var, büyükse yok. Sınır 0,7.
 | Seçenek | Varsayılan | Açıklama |
 |---|---|---|
 | `--format tiff` / `--format bmp` | tiff | Çıktı biçimi. İkisi de 8 bit indeksli, sıkıştırmasız. |
-| `--debug-dir KLASÖR` | yok | Temizlik öncesi etiket haritasını `regions.png` olarak buraya yazar. |
+| `--part` | kapalı | Aynalama ve TIFF/BMP yazma atlanır; yalnız tutulan parça `<isim>_part.png` (8 bit paletli, indeks 0 rezerve) + `<isim>_part.json` + `<isim>_palette.txt` olarak yazılır. Parçayı bir resim editöründe düzeltip `python -m img2texcelle.assemble data/<isim>/<isim>_part.png [--format bmp]` ile bitirin: JSON'daki eksenlere göre aynalar, `<isim>[_N].tiff/bmp` + palet yazar (üzerine yazmaz), kaynak resim gerekmez. Pikseller indekse değil **RGB'ye göre** eşlenir (editör RGB kaydedebilir, palet sırasını bozabilir); palette olmayan bir renk (indeks 0'ın siyahı dahil) ya da JSON'dakinden farklı boyut hatadır ve konumları listelenir. `--symmetry none --part` tüm ızgarayı yazar, JSON'da eksen yoktur. |
+| `--debug-dir KLASÖR` | yok | Temizlik öncesi parçanın etiket haritasını `regions.png` olarak buraya yazar. |
 
 ---
 
@@ -626,12 +642,19 @@ Testler geçse bile asıl hatalar görsel ve sayısaldır.
 
 `data/fomggggggbro/fomggggggbro.jpg` (3392×5056, madalyon merkezden 128 px
 yukarıda) `--width 200 --height 300 --reed 397 --density 500 --palette
-<_6_palette.txt'deki renkler> --format bmp` ile çalıştırıldığında sol/sağ
-ekseni ortada, üst/alt ekseni 2399,5. satırda bulmalı, `bottom half (2656
-rows) kept and mirrored onto the top (2400 rows): image 3392x5312` ve
-`*** CARPET 200 x 313.2 cm, KNOT GRID 794 x 1566 ***` yazmalı ve
+<_6_palette.txt'deki renkler> --format bmp --symmetry both` ile
+çalıştırıldığında sol/sağ ekseni ortada, üst/alt ekseni 2399,5. satırda
+bulmalı, `bottom half (2656 rows) kept and mirrored onto the top (2400
+rows): image 3392x5312`, `*** CARPET 200 x 313.2 cm, KNOT GRID 794 x 1566
+***` ve `part: knots [0, 397) x [783, 1566) of 794 x 1566 (397 x 783);
+converting 794 x 803 knots = 51% of the grid` yazmalı ve
 `fomggggggbro_10.bmp` (794×1566) ile piksel piksel aynı, iki yönde de
-simetrik, taçlarda hayalet motifsiz bir çıktı vermelidir. Aynı komut
+simetrik, taçlarda hayalet motifsiz bir çıktı vermelidir (`--symmetry
+both` olmadan üst/alt ekseni yalnız uyarıda adlandırılır, çıktı yalnız
+sol/sağ simetrik olur). `--symmetry both --no-average` ile `converting 417
+x 803 knots = 27% of the grid` yazmalı ve `fomggggggbro_14.bmp` ile aynı
+olmalıdır (`_10`'dan düğümlerin %6,4'ünde farklıdır: her düğüm yalnız
+sol/alt çeyrekten karar verilir). Aynı komut
 `--stretch` ile yine alt yarıyı seçmeli (`4.4% distortion against 6.0% with
 the top half`), `4.4% distortion (--stretch)` yazmalı ve `fomggggggbro_11.bmp`
 (794×1500) ile aynı olmalıdır. `--symmetry lr --stretch` ile `0.6% distortion`
@@ -641,12 +664,16 @@ dokunulmaz). Eski `fomggggggbro_3.bmp` kaldırılan kırpma mantığının
 (üst yarı, 3392×4800, %6,0) çıktısıdır, artık üretilmez (2026-09-17
 referansları).
 
-### Başka bir kaynakta regresyon
+### Gerçek tasarımda regresyon
 
-`data/sonGemini_Generated_Image_t4zyvst4zyvst4zy.jpeg` dosyası
-`--reed 397 --density 500 --palette "#510A15,#FEF7D4,#D5A556,#774133"`
-ile (ve bir kez `--colors 8` ile) önceki çıktıyla piksel piksel aynı kalmalıdır.
-Oy veya temizlik adımına dokunmadan önce eski çıktının bir kopyasını saklayın.
+`data/roundtrip/003_200X300_397X50_X_sample/003_200X300_397X50_X_render.jpg`
+(3388×5082, gerçek tasarımın render'ı) `--width 200 --height 300 --reed 397
+--density 500` ve gerçek tasarımın 15 ipliği `--palette` olarak (yanındaki
+`003_200X300_397X50_X_render_ref_palette.txt`) verildiğinde iki ekseni de
+ortada bulmalı (kontrast 0,00, average + copy, %100 dönüştürülür) ve
+`003_200X300_397X50_X_render_ref.bmp` (794×1500) ile piksel piksel aynı
+kalmalıdır; `--no-average` ile (%27) `..._ref_noavg.bmp` ile. Oy veya
+temizlik adımına dokunmadan önce eski çıktının bir kopyasını saklayın.
 
 ---
 

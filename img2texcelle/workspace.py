@@ -1,9 +1,10 @@
 """Where a run lives: data/<name>/ holds the source image and every output.
 
 `prepare_run` creates data/<name>/ (name = the source file name without
-extension) and picks the output names: <name>.tiff / <name>.bmp plus
-<name>_palette.txt, or the next free <name>_2, <name>_3, ... when those
-exist, so nothing is ever overwritten. `finish_run` then moves the source
+extension) and picks the output names: <name>.tiff / <name>.bmp (or, with
+--part, <name>_part.png + <name>_part.json) plus <name>_palette.txt, or the
+next free <name>_2, <name>_3, ... when those exist, so nothing is ever
+overwritten. `finish_run` then moves the source
 image into the folder (only after a successful conversion, so a failed run
 leaves the source where it was); a source already inside is left alone.
 """
@@ -13,7 +14,7 @@ import shutil
 from dataclasses import dataclass
 from pathlib import Path
 
-from .output import FORMATS, palette_txt_path
+from .output import FORMATS, PART_SUFFIX, palette_txt_path, part_json_path
 
 
 def project_root():
@@ -29,8 +30,13 @@ def data_dir():
 class RunPaths:
     run_dir: Path      # data/<name>/
     source: Path       # the source image where it is now
-    image: Path        # output tiff/bmp
+    image: Path        # output tiff/bmp (or _part.png)
     palette_txt: Path  # output palette text
+
+    @property
+    def part_json(self):
+        """The JSON next to a _part.png output."""
+        return Path(part_json_path(str(self.image)))
 
     @property
     def source_target(self):
@@ -39,8 +45,9 @@ class RunPaths:
 
 
 def next_free_name(run_dir, stem, fmt):
-    """First (image, palette_txt) pair under run_dir that does not exist yet."""
-    ext = FORMATS[fmt][0]
+    """First (image, palette_txt) pair under run_dir that does not exist yet;
+    `fmt` is tiff / bmp / part (<stem>[_N]_part.png)."""
+    ext = PART_SUFFIX if fmt == "part" else FORMATS[fmt][0]
     i = 1
     while True:
         base = stem if i == 1 else f"{stem}_{i}"

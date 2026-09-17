@@ -15,6 +15,12 @@ of them is kept and mirrored onto the other (`mirror_halves`), so the axis
 becomes the image centre and nothing is cropped: without --stretch the
 larger half (the carpet height then follows the image), with --stretch the
 half whose mirrored image fits the carpet ratio with the least distortion.
+
+Only the kept part is converted (`part_region`): the kept half of every
+copy-only axis plus a pad of PAD_KNOTS beyond the axis (reflected pixels,
+so the pad is what the mirror will put there), the whole extent of an
+averaged axis (both halves are evidence). The part without the pad is the
+output part; the full knot map is the part mirrored (`mirror_copy`).
 """
 
 import itertools
@@ -25,9 +31,13 @@ from PIL import Image
 
 from .grid import distortion
 
-AXIS_CONTRAST = 0.7   # measure_axis contrast below which an axis is trusted
-EXACT_MATCH = 0.35    # measure_axis match below which the halves match everywhere
+AXIS_CONTRAST_AUTO = 0.4    # --symmetry auto takes an axis below this contrast
+AXIS_CONTRAST = 0.7         # below this an axis is worth a hint (auto) / a --symmetric cut (split)
+AXIS_CONTRAST_FORCED = 0.9  # --symmetry lr/tb/both use the measured position below this
+EXACT_MATCH = 0.35          # measure_axis match below which the halves match everywhere
+PAD_KNOTS = 20              # knots processed beyond a copy-only axis (see `part_region`)
 AXIS_NAMES = {1: "left/right", 0: "top/bottom"}
+FLAGS = {1: "lr", 0: "tb"}
 
 
 def _grey(img, factor):
@@ -157,18 +167,21 @@ def mirror_half(img, axis, shift, side):
     return Image.fromarray(np.ascontiguousarray(out))
 
 
-def find_axes(img, mode="auto"):
+def find_axes(img, mode="auto", average=True):
     """Decide the symmetric axes (`mode`: auto / none / lr / tb / both).
 
-    `auto` takes an axis whose contrast is below AXIS_CONTRAST; `lr` / `tb` /
-    `both` take the axis regardless, at the measured position when it is
-    clear, otherwise at the centre with a warning (a guess could mirror the
-    image at a random place). Returns {axis: (shift, average)} for the taken
-    axes (1 = left/right, 0 = top/bottom): `shift` is the axis position from
-    `measure_axis` (0 = centre), `average` says the halves match everywhere
-    (match below EXACT_MATCH), so their coverage may be averaged
-    (`mirror_average`); either way the kept half is copied onto the other
-    after cleanup (`mirror_copy`).
+    `auto` takes an axis whose contrast is below AXIS_CONTRAST_AUTO; one
+    between that and AXIS_CONTRAST (fom top/bottom: 0.57) is not used but
+    named, with the --symmetry flag that forces it. `lr` / `tb` / `both`
+    take the axis regardless, at the measured position when its contrast is
+    below AXIS_CONTRAST_FORCED, otherwise at the centre with a warning (a
+    guess could mirror the image at a random place). Returns
+    {axis: (shift, average)} for the taken axes (1 = left/right, 0 =
+    top/bottom): `shift` is the axis position from `measure_axis` (0 =
+    centre), `average` says the halves match everywhere (match below
+    EXACT_MATCH) and `average` was not switched off (--no-average), so their
+    coverage may be averaged (`mirror_average`); either way the kept half is
+    copied onto the other after cleanup (`mirror_copy`).
     """
     axes = {"auto": [1, 0], "both": [1, 0], "lr": [1], "tb": [0], "none": []}[mode]
     taken = {}
@@ -176,19 +189,26 @@ def find_axes(img, mode="auto"):
         size = img.size[0] if ax == 1 else img.size[1]
         shift, contrast, match = measure_axis(img, ax)
         where = describe_axis(ax, size, shift)
-        if contrast > AXIS_CONTRAST:
-            if mode == "auto":
+        if mode == "auto" and contrast >= AXIS_CONTRAST_AUTO:
+            if contrast < AXIS_CONTRAST:
+                print(f"warning: {AXIS_NAMES[ax]} mirror axis unclear, not used (best candidate "
+                      f"{where}, contrast {contrast:.2f} >= {AXIS_CONTRAST_AUTO}); force it with "
+                      f"--symmetry {FLAGS[ax]}" + (" (or both)" if len(axes) > 1 else ""), flush=True)
+            else:
                 print(f"symmetry: {AXIS_NAMES[ax]} not symmetric (best axis {where}, "
-                      f"contrast {contrast:.2f} > {AXIS_CONTRAST})", flush=True)
-                continue
+                      f"contrast {contrast:.2f} >= {AXIS_CONTRAST})", flush=True)
+            continue
+        if mode != "auto" and contrast >= AXIS_CONTRAST_FORCED:
             print(f"warning: no clear {AXIS_NAMES[ax]} mirror axis (contrast {contrast:.2f} "
-                  f"> {AXIS_CONTRAST}; best candidate {where}); forced, using the centre",
+                  f">= {AXIS_CONTRAST_FORCED}; best candidate {where}); forced, using the centre",
                   flush=True)
             shift, match, where = 0, 1.0, describe_axis(ax, size, 0)  # never average
-        taken[ax] = (shift, match < EXACT_MATCH)
+        avg = bool(average and match < EXACT_MATCH)
+        taken[ax] = (int(shift), avg)
+        how = "average + copy" if avg else ("copy only (--no-average)" if match < EXACT_MATCH
+                                            else "copy only")
         print(f"symmetry: {AXIS_NAMES[ax]} axis {where}, contrast {contrast:.2f}, halves "
-              f"match {match:.2f} -> " + ("average + copy" if match < EXACT_MATCH else "copy only"),
-              flush=True)
+              f"match {match:.2f} -> {how}", flush=True)
     if not taken:
         print("symmetry: none", flush=True)
     return taken
@@ -196,8 +216,10 @@ def find_axes(img, mode="auto"):
 
 def mirror_halves(img, axes, stretch_to=None):
     """Make every taken axis the image centre by keeping one half and
-    replacing the other with its mirror (`mirror_half`); an axis already at
-    the centre leaves the image alone (both halves keep their evidence).
+    replacing the other with its mirror (`mirror_half`); an averaged axis
+    already at the centre leaves the image alone (both halves keep their
+    evidence), a copy-only axis at the centre still replaces the other half
+    (only the kept half and a reflected pad are converted, `part_region`).
 
     `axes` is `find_axes`' result. Without `stretch_to` the larger half is
     kept: nothing is cropped, the image only grows (fom: 3392x5056 with the
@@ -225,8 +247,10 @@ def mirror_halves(img, axes, stretch_to=None):
         combos = [dict(zip(choices, names)) for names in itertools.product(*choices.values())]
         sides = min(combos, key=lambda c: distortion(*image_size(c), *stretch_to)) if combos else {}
     for ax, side in sides.items():
-        shift = axes[ax][0]
+        shift, average = axes[ax]
         if shift == 0:
+            if not average:
+                img = mirror_half(img, ax, 0, side)
             continue
         other = next(n for n in choices[ax] if n != side)
         size, unit = (w, "columns") if ax == 1 else (h, "rows")
@@ -241,6 +265,32 @@ def mirror_halves(img, axes, stretch_to=None):
         print(f"symmetry: {side} half ({kept} {unit}) kept and mirrored onto the {other} "
               f"({dropped} {unit}): image {img.width}x{img.height} ({why})", flush=True)
     return img, sides
+
+
+def part_region(px_w, px_h, axes, sides, pad=PAD_KNOTS):
+    """Which knots are converted and which are the output part.
+
+    Returns (region, part) as (x0, y0, x1, y1) knot rectangles of the
+    px_w x px_h grid. Along a copy-only axis (`axes` from `find_axes`,
+    `sides` from `mirror_halves`) the part is the kept half (an odd grid's
+    middle knot, centred on the axis, belongs to it) and the region adds
+    `pad` knots beyond the axis: the reach of `straighten_runs` (runs of 15,
+    window 9), `directional_mean` and `remove_islands`, so a knot of the
+    part is decided as in the whole image unless a structure crosses the
+    pad. Along an averaged axis the region is the whole extent (the other
+    half is evidence) and the part is still the kept half. No axis: both
+    are the whole grid.
+    """
+    region, part = [0, 0, px_w, px_h], [0, 0, px_w, px_h]
+    for ax, (_, average) in axes.items():
+        size = px_w if ax == 1 else px_h
+        first = sides[ax] in ("left", "top")
+        lo, hi = (0, size - size // 2) if first else (size // 2, size)
+        i = 0 if ax == 1 else 1
+        part[i], part[i + 2] = lo, hi
+        if not average:
+            region[i], region[i + 2] = (0, min(hi + pad, size)) if first else (max(lo - pad, 0), size)
+    return tuple(region), tuple(part)
 
 
 def mirror_average(a, lr, tb):

@@ -45,8 +45,17 @@ def build_parser():
                         "(0=off; default 20 mm^2: 4 knots at 397x500)")
     p.add_argument("--symmetry", choices=["auto", "none", "lr", "tb", "both"], default="auto",
                    help="mirror symmetry of the design: auto (default) detects it from the "
-                        "image; lr / tb / both force it; none disables. Symmetric halves "
-                        "are decided together and copied, so opposite motifs are identical")
+                        "image; lr / tb / both force it; none disables. One half of a "
+                        "symmetric design is converted and mirrored, so opposite motifs are "
+                        "identical")
+    p.add_argument("--no-average", dest="average", action="store_false",
+                   help="decide every symmetric axis from its kept half only, never from both "
+                        "halves together (faster; halves that match everywhere are averaged "
+                        "by default)")
+    p.add_argument("--part", action="store_true",
+                   help="write the kept part only, as <name>_part.png + <name>_part.json "
+                        "(no mirroring, no TIFF/BMP); edit it and finish with "
+                        "python -m img2texcelle.assemble")
     p.add_argument("--debug-dir", default=None,
                    help="write regions.png (the label map before cleanup) here")
     return p
@@ -58,10 +67,9 @@ def main(argv=None):
     opts = Options(
         width_cm=a.width, height_cm=a.height, reed=a.reed, density=a.density,
         colors=a.colors, palette=parse_palette(a.palette) if a.palette else None,
-        merge=a.merge, min_area=a.min_area, symmetry=a.symmetry, stretch=a.stretch,
-        fmt=a.format,
-        debug_dir=a.debug_dir)
-    paths = prepare_run(a.src, a.format)
+        merge=a.merge, min_area=a.min_area, symmetry=a.symmetry, average=a.average,
+        stretch=a.stretch, fmt=a.format, part=a.part, debug_dir=a.debug_dir)
+    paths = prepare_run(a.src, "part" if a.part else a.format)
     try:
         convert(str(paths.source), str(paths.image), opts)
     except BaseException:

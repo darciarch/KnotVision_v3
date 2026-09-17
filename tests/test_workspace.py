@@ -77,3 +77,16 @@ def test_name_clash_with_a_different_file_is_an_error(tmp_path):
     make_jpg(data / "design" / "design.jpeg")
     with pytest.raises(SystemExit, match="already exists"):
         prepare_run(src, "tiff", root=data)
+
+
+def test_part_output_names(tmp_path):
+    from img2texcelle.workspace import next_free_name
+    image, txt = next_free_name(tmp_path, "design", "part")
+    assert (image.name, txt.name) == ("design_part.png", "design_palette.txt")
+    image.touch()
+    image, txt = next_free_name(tmp_path, "design", "part")
+    assert (image.name, txt.name) == ("design_2_part.png", "design_2_palette.txt")
+    src = tmp_path / "design.jpg"
+    make_jpg(src)
+    paths = prepare_run(src, "part", root=tmp_path / "data")
+    assert paths.image.name == "design_part.png" and paths.part_json.name == "design_part.json"

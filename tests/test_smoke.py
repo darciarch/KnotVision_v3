@@ -3,11 +3,14 @@ only palette colors (indices 1..K), leave index 0 unused and carry
 reed/density in the resolution fields; the carpet-size (--stretch) and
 source-scale rules."""
 
+import json
+
 import numpy as np
 import pytest
 from PIL import Image
 
 from img2texcelle import Options, convert
+from img2texcelle.assemble import assemble
 from img2texcelle.color import parse_palette
 
 PALETTE = "#510A15,#FEF7D4,#D5A556"
@@ -111,3 +114,100 @@ def test_off_centre_axis_keeps_the_larger_half(tmp_path, capsys):
     assert labels.shape == (150, 79)
     assert np.array_equal(labels, labels[::-1]) and np.array_equal(labels, labels[:, ::-1])
     assert labels[75, 40] == 0 and labels[75, 8] == 1 and labels[57, 24] == 2
+
+
+def test_no_average_and_pad_give_the_same_design(tmp_path, capsys):
+    """Only the kept part plus a pad is converted. Against a run that converts
+    the whole grid (pad = the grid) the knots may differ only within the pad
+    of an axis; on the synthetic design they do not differ at all."""
+    src = tmp_path / "design.jpg"
+    make_design(str(src))
+    base = dict(reed=397, density=500, palette=parse_palette(PALETTE), average=False)
+    whole, _ = convert(str(src), str(tmp_path / "whole.tiff"), Options(20, 30, pad=1000, **base))
+    out = capsys.readouterr().out
+    assert "copy only (--no-average)" in out
+    assert "part: knots [0, 40) x [0, 75) of 79 x 150 (40 x 75); converting 79 x 150 knots" in out
+    padded, _ = convert(str(src), str(tmp_path / "padded.tiff"), Options(20, 30, **base))
+    assert "converting 60 x 95 knots = 48% of the grid" in capsys.readouterr().out
+    assert whole.shape == padded.shape == (150, 79)
+    assert np.array_equal(padded, padded[:, ::-1]) and np.array_equal(padded, padded[::-1])
+    diff = np.argwhere(whole != padded)
+    assert len(diff) == 0, diff
+    # the default (averaged) run of the symmetric design agrees as well
+    averaged, _ = convert(str(src), str(tmp_path / "avg.tiff"),
+                          Options(20, 30, reed=397, density=500, palette=parse_palette(PALETTE)))
+    assert "converting 79 x 150 knots" in capsys.readouterr().out
+    assert np.array_equal(averaged, padded)
+
+
+def test_part_and_assemble(tmp_path, capsys):
+    src = tmp_path / "design.jpg"
+    make_design(str(src))
+    opts = Options(20, 30, reed=397, density=500, palette=parse_palette(PALETTE), fmt="bmp")
+    full, _ = convert(str(src), str(tmp_path / "design.bmp"), opts)
+    png = tmp_path / "design_part.png"
+    part, _ = convert(str(src), str(png), Options(**{**opts.__dict__, "part": True}))
+    out = capsys.readouterr().out
+    assert part.shape == (75, 40)  # the left/top quarter, with the middle column of the odd grid
+    assert f"{png}: part 40 x 75 px at (0, 0) of 79 x 150" in out
+    assert np.array_equal(part, full[:75, :40])
+    im = Image.open(png)
+    assert im.mode == "P" and np.array_equal(np.asarray(im), part + 1)
+    info = json.loads((tmp_path / "design_part.json").read_text())
+    assert info["format"] == "img2texcelle-part" and info["grid"] == [79, 150]
+    assert info["part"] == {"x": 0, "y": 0, "width": 40, "height": 75}
+    assert info["axes"] == {"lr": {"kept": "left", "averaged": True, "shift": 0,
+                                   "position": "at column 199.5 (at the centre)"},
+                            "tb": {"kept": "top", "averaged": True, "shift": 0,
+                                   "position": "at row 299.5 (at the centre)"}}
+    assert info["palette"] == ["#510A15", "#FEF7D4", "#D5A556"] and info["ppm"] == [397, 500]
+    assert info["source"] == "design.jpg" and info["carpet_cm"] == [20, 30] and not info["rotated"]
+    assert (tmp_path / "design_palette.txt").read_text().splitlines()[0] == "1\t81\t10\t21\t#510A15"
+    assert not (tmp_path / "design_part.bmp").exists()
+
+    # assemble: the same file as the direct run, named after the source, never overwriting
+    labels, image = assemble(str(png), "bmp")
+    assert image == tmp_path / "design_2.bmp"  # design.bmp exists
+    assert np.array_equal(labels, full)
+    assert np.array_equal(np.asarray(Image.open(image)), np.asarray(Image.open(tmp_path / "design.bmp")))
+    assert (tmp_path / "design_2_palette.txt").read_text() == (tmp_path / "design_palette.txt").read_text()
+    assert tuple(round(v) for v in Image.open(image).info["dpi"]) == (397, 500)
+
+    # an editor saves RGB and edits a knot: matched by color, the edit is mirrored 4 times
+    rgb = Image.open(png).convert("RGB")
+    a = np.asarray(rgb).copy()
+    a[10, 10] = parse_palette(PALETTE)[2]
+    Image.fromarray(a).save(png)
+    labels, image = assemble(str(png), "tiff")
+    assert image == tmp_path / "design_3.tiff"  # design_2_palette.txt exists
+    assert labels[10, 10] == labels[10, 68] == labels[139, 10] == labels[139, 68] == 2
+    labels[10, 10] = labels[10, 68] = labels[139, 10] = labels[139, 68] = full[10, 10]
+    assert np.array_equal(labels, full)
+
+    # a foreign color (and the reserved black) is an error naming the pixels
+    a[5, 7] = (1, 2, 3)
+    a[6, 7] = (0, 0, 0)
+    Image.fromarray(a).save(png)
+    with pytest.raises(SystemExit) as e:
+        assemble(str(png), "bmp")
+    assert "2 px in 2 colors that are not in the palette" in str(e.value)
+    assert "#010203: 1 px at (7,5)" in str(e.value) and "#000000: 1 px at (7,6)" in str(e.value)
+    # a wrong size is an error
+    Image.fromarray(a[:-1]).save(png)
+    with pytest.raises(SystemExit, match="is 40x74 px, the part in .* is 40x75"):
+        assemble(str(png), "bmp")
+
+
+def test_part_without_symmetry_is_the_whole_grid(tmp_path):
+    src = tmp_path / "design.jpg"
+    make_design(str(src))
+    png = tmp_path / "design_part.png"
+    part, _ = convert(str(src), str(png), Options(20, 30, reed=397, density=500,
+                                                  palette=parse_palette(PALETTE), symmetry="none",
+                                                  part=True))
+    assert part.shape == (150, 79)
+    info = json.loads((tmp_path / "design_part.json").read_text())
+    assert info["axes"] == {} and info["part"] == {"x": 0, "y": 0, "width": 79, "height": 150}
+    labels, image = assemble(str(png), "bmp")
+    assert image == tmp_path / "design_2.bmp"  # design_palette.txt exists
+    assert np.array_equal(labels, part)

@@ -20,9 +20,12 @@ class Options:
     min_area: int | None = None  # knots; None = 20 mm^2 worth of knots
     # symmetry
     symmetry: str = "auto"       # auto / none / lr / tb / both
+    average: bool = True         # False (--no-average): decide every axis from the kept half only
+    pad: int | None = None       # knots converted beyond a copy-only axis; None = symmetry.PAD_KNOTS
     # size: fit the image into width x height by stretching it (up to 10%);
     # otherwise the width is kept and the height follows the image ratio
     stretch: bool = False
     # output
     fmt: str = "tiff"            # tiff / bmp
+    part: bool = False           # write only the kept part (<name>_part.png + .json), no mirroring
     debug_dir: str | None = None

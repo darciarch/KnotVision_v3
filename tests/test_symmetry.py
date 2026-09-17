@@ -3,9 +3,10 @@
 import numpy as np
 from PIL import Image
 
-from img2texcelle.symmetry import (AXIS_CONTRAST, EXACT_MATCH, describe_axis, find_axes,
-                                   half_sizes, measure_axis, mirror_copy, mirror_error,
-                                   mirror_half, mirror_halves, mirrored_size)
+from img2texcelle.symmetry import (AXIS_CONTRAST, AXIS_CONTRAST_AUTO,
+                                   EXACT_MATCH, describe_axis, find_axes, half_sizes,
+                                   measure_axis, mirror_copy, mirror_error, mirror_half,
+                                   mirror_halves, mirrored_size, part_region)
 
 from test_split import noisy_mirrored_image, off_centre_image
 
@@ -50,9 +51,15 @@ def test_axis_off_centre_by_a_quarter():
 def test_band_only_symmetry_is_an_axis_but_not_an_exact_match():
     img = band_only_image()
     shift, contrast, match = measure_axis(img, 0)
-    assert shift == -60 and contrast < AXIS_CONTRAST
+    assert shift == -60 and contrast < AXIS_CONTRAST_AUTO
     assert match > EXACT_MATCH  # the halves match only near the axis
     assert measure_axis(img, 1)[1] > AXIS_CONTRAST  # left/right: nothing
+
+
+def test_narrow_band_is_an_unclear_axis():
+    """A mirror band of only 8% of the height (fom's top/bottom: 0.57)."""
+    shift, contrast, _ = measure_axis(band_only_image(band=0.08, seed=5), 0)
+    assert shift == -60 and AXIS_CONTRAST_AUTO <= contrast < AXIS_CONTRAST
 
 
 def test_noise_has_no_axis():
@@ -66,13 +73,46 @@ def test_find_axes_modes(capsys):
     img = band_only_image()  # 200x300, top/bottom axis at row 119.5 (60 px above the centre)
     assert find_axes(img, "auto") == {0: (-60, False)}
     assert "copy only" in capsys.readouterr().out
-    # forced: the measured axis is used, not the centre; an unclear forced
-    # axis stays at the centre and is never averaged
-    assert find_axes(img, "both") == {1: (0, False), 0: (-60, False)}
-    assert "warning: no clear left/right" in capsys.readouterr().out
+    # forced: the measured axis is used below AXIS_CONTRAST_FORCED (left/right
+    # here: 0.87, 12 px left); an unclear forced axis stays at the centre and
+    # is never averaged
+    assert find_axes(img, "both") == {1: (-24, False), 0: (-60, False)}
+    assert "warning" not in capsys.readouterr().out
+    rng = np.random.default_rng(0)
+    noise = Image.fromarray(rng.integers(0, 256, (240, 160, 3), dtype=np.uint8))
+    assert find_axes(noise, "lr") == {1: (0, False)}
+    assert "warning: no clear left/right mirror axis" in capsys.readouterr().out
     assert find_axes(img, "none") == {}
-    # an exact mirror is averaged as well
-    assert find_axes(off_centre_image(160, 240, 3, 2), "auto") == {1: (-3, True), 0: (-2, True)}
+    # an exact mirror is averaged as well, unless --no-average
+    exact = off_centre_image(160, 240, 3, 2)
+    assert find_axes(exact, "auto") == {1: (-3, True), 0: (-2, True)}
+    assert find_axes(exact, "auto", average=False) == {1: (-3, False), 0: (-2, False)}
+    assert "copy only (--no-average)" in capsys.readouterr().out
+
+
+def test_unclear_axis_is_named_in_auto_and_taken_when_forced(capsys):
+    img = band_only_image(band=0.08, seed=5)  # top/bottom contrast 0.56
+    assert find_axes(img, "auto") == {}
+    out = capsys.readouterr().out
+    assert ("warning: top/bottom mirror axis unclear, not used (best candidate at row 119.5 "
+            "(30 px above the centre), contrast 0.56 >= 0.4); force it with --symmetry tb (or both)") in out
+    assert "symmetry: left/right not symmetric" in out
+    assert find_axes(img, "tb") == {0: (-60, False)}
+    assert "warning" not in capsys.readouterr().out
+
+
+def test_part_region():
+    # no axis: everything
+    assert part_region(79, 150, {}, {}) == ((0, 0, 79, 150), (0, 0, 79, 150))
+    # copy-only axes: the kept half (odd: with the middle knot) plus the pad
+    axes = {1: (0, False), 0: (-2, False)}
+    assert part_region(79, 150, axes, {1: "left", 0: "top"}, 20) == ((0, 0, 60, 95), (0, 0, 40, 75))
+    assert part_region(79, 150, axes, {1: "right", 0: "bottom"}, 20) == ((19, 55, 79, 150), (39, 75, 79, 150))
+    # an averaged axis: the whole extent is converted, the part is still the kept half
+    assert part_region(794, 1566, {1: (0, True), 0: (-256, False)}, {1: "left", 0: "bottom"}) \
+        == ((0, 763, 794, 1566), (0, 783, 397, 1566))
+    # the pad never leaves the grid
+    assert part_region(10, 10, {1: (0, False)}, {1: "left"}, 20) == ((0, 0, 10, 10), (0, 0, 5, 10))
 
 
 def test_half_sizes_and_mirror_half():
@@ -105,10 +145,16 @@ def test_mirror_halves_keeps_the_larger_half_or_the_better_fit(capsys):
     assert "0.0% distortion against 50.0% with the bottom half" in capsys.readouterr().out
     out, sides = mirror_halves(img, axes, (20, 36))
     assert sides == {0: "bottom"} and out.size == (200, 360)
-    # an axis at the centre leaves the image alone; no axis, nothing
+    # an averaged axis at the centre leaves the image alone; no axis, nothing
     out, sides = mirror_halves(img, {1: (0, True), 0: (-60, False)})
     assert sides == {1: "left", 0: "bottom"} and out.size == (200, 360)
     assert mirror_halves(img, {})[1] == {} and mirror_halves(img, {1: (0, True)})[0] is img
+    # a copy-only axis at the centre: the left half is kept and mirrored (the
+    # pad beyond the axis must be reflected pixels, not the other half)
+    out, sides = mirror_halves(img, {1: (0, False)})
+    assert sides == {1: "left"} and out.size == (200, 300)
+    assert np.array_equal(np.asarray(out)[:, :100], np.asarray(img)[:, :100])
+    assert np.array_equal(np.asarray(out), np.asarray(out)[:, ::-1])
 
 
 def test_mirror_copy_sides():

@@ -19,6 +19,7 @@ test = ["pytest"]
 [project.scripts]
 img2texcelle = "img2texcelle.cli:main"
 img2texcelle-split = "img2texcelle.split:main"
+img2texcelle-assemble = "img2texcelle.assemble:main"
 
 [tool.setuptools]
 packages = ["img2texcelle"]
