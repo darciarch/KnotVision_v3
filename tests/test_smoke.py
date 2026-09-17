@@ -1,6 +1,6 @@
 """End-to-end smoke test on a synthetic flat design: the output must contain
 only palette colors (indices 1..K), leave index 0 unused and carry
-reed/density in the resolution fields."""
+reed/density in the resolution fields; the aspect-ratio and source-scale rules."""
 
 import numpy as np
 import pytest
@@ -64,7 +64,16 @@ def test_coarse_source_is_an_error(tmp_path):
 
 def test_aspect_mismatch_is_an_error(tmp_path):
     src = tmp_path / "wide.jpg"
-    make_design(str(src), 600, 600)
-    with pytest.raises(SystemExit, match="--fit crop"):
+    make_design(str(src), 600, 600)  # 50% off the 2:3 carpet
+    with pytest.raises(SystemExit, match="within 10%"):
         convert(str(src), str(tmp_path / "wide.tiff"),
                 Options(20, 30, reed=397, density=500, palette=parse_palette(PALETTE)))
+
+
+def test_small_aspect_mismatch_is_resized_and_reported(tmp_path, capsys):
+    src = tmp_path / "wide.jpg"
+    make_design(str(src), 420, 600)  # ratio 0.70 vs 0.667: 5% off
+    labels, _ = convert(str(src), str(tmp_path / "wide.tiff"),
+                        Options(20, 30, reed=397, density=500, palette=parse_palette(PALETTE)))
+    assert labels.shape == (150, 79)
+    assert "5.0% distortion" in capsys.readouterr().out

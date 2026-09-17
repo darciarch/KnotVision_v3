@@ -73,9 +73,9 @@ def straighten_runs(labels, soft, hard, thr=0.6, own=0.85, length=9, min_run=15)
     `min_run` knots takes one color: the majority of the source pixel labels
     over the run (`hard` coverage; the soft mean would tie on a line that
     straddles two rows evenly). Short runs (curved edges, small shapes) keep
-    their per-knot decision. Round trip on the real design: min_run 9 costs
-    0.5%, 15 costs 0.25% (2 px/knot); the Gemini band edge becomes one row
-    with either. Returns (knots changed, runs decided).
+    their per-knot decision. On the real design min_run 9 costs twice as many
+    knots as 15; a source's border band edge becomes one row with either.
+    Returns (knots changed, runs decided).
     """
     d, ori = directional_mean(soft, length)
     amb = (d.max(-1) < thr) & (soft.max(-1) < own)
@@ -107,8 +107,8 @@ def vote_knots(alpha, knot_size, sym_lr, sym_tb):
 
     Every knot takes the color covering most of its area ("soft" coverage:
     the per-pixel fractions area-averaged onto the knot; it beats the majority
-    of one-hot pixel labels on the real design round trip, 98.8% vs 98.2% at
-    2 px/knot). Symmetric halves are averaged with their mirror first. The
+    of one-hot pixel labels on the real design). Symmetric halves are averaged
+    with their mirror first. The
     one-hot majority ("hard") is only used by `straighten_runs`.
     """
     n = alpha.shape[-1]

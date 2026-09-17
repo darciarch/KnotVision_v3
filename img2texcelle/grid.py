@@ -1,28 +1,18 @@
-"""Knot grid geometry and fitting the source image to the carpet."""
-
-import math
-import sys
+"""Knot grid geometry and checking the source image against the carpet."""
 
 from PIL import Image
 
+MAX_ASPECT_OFF = 0.10  # image ratio may differ from the carpet ratio by this much
 
-def compute_pixels(width_cm, height_cm, points=None, reed=None, density=None, grid=None):
+
+def compute_pixels(width_cm, height_cm, reed, density):
     """Return (px_w, px_h, ppm_x, ppm_y): the knot grid and the points per
     meter written into the file header (Texcelle stores reed/density there)."""
-    if reed and density:
-        ppm_x, ppm_y = reed, density
-    elif points:
-        # square assumption: same points per meter in both directions
-        ppm_x = ppm_y = math.sqrt(points)
-    elif grid:
-        ppm_x, ppm_y = grid[0] * 100.0 / width_cm, grid[1] * 100.0 / height_cm
-    else:
-        raise ValueError("give --points, --reed and --density, or --grid")
-    if grid:
-        px_w, px_h = grid
-    else:
-        px_w = round(width_cm / 100.0 * ppm_x)
-        px_h = round(height_cm / 100.0 * ppm_y)
+    if not (reed and density):
+        raise ValueError("give reed and density")
+    ppm_x, ppm_y = reed, density
+    px_w = round(width_cm / 100.0 * ppm_x)
+    px_h = round(height_cm / 100.0 * ppm_y)
     return px_w, px_h, ppm_x, ppm_y
 
 
@@ -46,53 +36,39 @@ def rotate_to_carpet(img, width_cm, height_cm):
     return img
 
 
-def fit_to_carpet(img, width_cm, height_cm, px_w, px_h, fit=None, tol=0.02):
-    """Check the image aspect ratio against the carpet.
+def check_aspect(img, width_cm, height_cm, max_off=MAX_ASPECT_OFF):
+    """Check the image aspect ratio against the carpet's ratio in cm.
 
-    The image must have the carpet's ratio either with square pixels (a
-    rendering: 2:3 for 200 x 300 cm) or with one pixel per knot in both
-    directions (a Texcelle-like grid: 793:1501, knots are not square).
-    Otherwise `fit` must be "crop" (centre crop) or "stretch" (circles become
-    ellipses); with `fit` None it is an error.
+    The image has square pixels, so its ratio should be the carpet's. A
+    difference up to `max_off` is accepted: the image is later resized onto
+    the knot grid (the area average in the vote), which distorts it by that
+    much, and the distortion is printed. A larger difference is an error.
+    Returns the image unchanged.
     """
     img_ratio = img.width / img.height
     carpet_ratio = width_cm / height_cm
-    grid_ratio = px_w / px_h
-    off = min(abs(img_ratio - carpet_ratio) / carpet_ratio,
-              abs(img_ratio - grid_ratio) / grid_ratio)
-    if off <= tol:
-        return img
-    if img_ratio > carpet_ratio:
-        crop_w, crop_h = round(img.height * carpet_ratio), img.height
-    else:
-        crop_w, crop_h = img.width, round(img.width / carpet_ratio)
-    if fit is None:
+    off = abs(img_ratio - carpet_ratio) / carpet_ratio
+    if off > max_off:
         raise SystemExit(
-            f"ERROR: image ratio {img_ratio:.3f} ({img.width}x{img.height}) matches "
-            f"neither the carpet ratio {carpet_ratio:.3f} ({width_cm:g}x{height_cm:g} cm) "
-            f"nor the knot grid ratio {grid_ratio:.3f} ({px_w}x{px_h}). Use --fit crop "
-            f"(center crop to {crop_w}x{crop_h}), --fit stretch, or make the source "
-            f"{2 * px_w}x{2 * px_h} (2 px per knot).")
-    if fit == "crop":
-        x0, y0 = (img.width - crop_w) // 2, (img.height - crop_h) // 2
-        img = img.crop((x0, y0, x0 + crop_w, y0 + crop_h))
-        print(f"image center-cropped to {crop_w}x{crop_h} to match carpet ratio", flush=True)
-    else:
-        print(f"WARNING: image ratio {img_ratio:.3f} != carpet ratio {carpet_ratio:.3f}, "
-              f"image will be stretched", file=sys.stderr)
+            f"ERROR: image ratio {img_ratio:.3f} ({img.width}x{img.height}) is "
+            f"{100 * off:.1f}% off the carpet ratio {carpet_ratio:.3f} "
+            f"({width_cm:g} x {height_cm:g} cm); the image must have the carpet's aspect "
+            f"ratio within {100 * max_off:.0f}%")
+    print(f"aspect: image ratio {img_ratio:.3f} ({img.width}x{img.height}) vs carpet "
+          f"{carpet_ratio:.3f}, resized to the knot grid with {100 * off:.1f}% distortion",
+          flush=True)
     return img
 
 
 def source_scale(img, px_w, px_h):
-    """Source px per knot: (sx, sy, geometric mean). The source must be finer
-    than the knot grid (> 1 px per knot): every knot then takes the color
-    covering most of it. A coarser source cannot be converted (its 1 px lines
-    would break into beads on the knot grid)."""
+    """Source px per knot: (sx, sy, geometric mean). The source must have
+    more pixels than knots in both directions: every knot then takes the
+    color covering most of it. A coarser source cannot be converted (its 1 px
+    lines would break into beads on the knot grid)."""
     sx, sy = img.width / px_w, img.height / px_h
-    scale = math.sqrt(sx * sy)
-    if scale <= 1.0:
+    if sx <= 1.0 or sy <= 1.0:
         raise SystemExit(
-            f"ERROR: source is coarser than the knot grid ({sx:.2f} x {sy:.2f} source px per "
-            f"knot, grid {px_w}x{px_h}). The source needs more than 1 px per knot, ideally "
-            f"2 px per knot ({2 * px_w}x{2 * px_h}); render the design larger.")
-    return sx, sy, scale
+            f"ERROR: source {img.width}x{img.height} is coarser than the knot grid "
+            f"{px_w}x{px_h} ({sx:.2f} x {sy:.2f} source px per knot); the image needs more "
+            f"pixels than knots in both directions")
+    return sx, sy, (sx * sy) ** 0.5

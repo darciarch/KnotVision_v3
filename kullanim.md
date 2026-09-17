@@ -25,8 +25,7 @@ Bu yüzden çıktı dosyası sadece palet renklerinden oluşmalı; içinde tek
 piksellik gürültü, benek veya kenarlarda "iki rengin arası" karışım renkleri
 bulunmamalıdır. Sonuçlar çıktıya yakınlaştırılarak (zoom) gözle kontrol edilir.
 
-Kısaca: **Gemini gibi bir araçla üretilmiş düz renkli halı deseni → dokunabilir
-Texcelle dosyası.**
+Kısaca: **düz renkli halı deseni görüntüsü → dokunabilir Texcelle dosyası.**
 
 ---
 
@@ -39,13 +38,13 @@ Texcelle dosyası.**
 | **Density (sıklık)** | Dikeyde metre başına sıra sayısı. Örnek: 500 → 1 metrede 500 sıra (10 cm'de 50 sıra). |
 | **Düğüm ızgarası (grid)** | Çıktının piksel boyutu. 200×300 cm halı, 397×500 kalitede ≈ 794×1500 düğüm olur. |
 | **Palet** | Kullanılacak iplik renklerinin listesi. Çıktıda indeks 0 siyah ve boştur; iplikler 1'den başlar. |
-| **Kaynak görüntü** | Dönüştürülecek desen resmi (jpg/png). Düz renkli ve halının en/boy oranında olmalı. |
-| **Kaynak ölçeği (scale)** | Her düğüme kaç kaynak pikseli düştüğü. İdeal değer 2 (yani 1 düğüm = 2×2 kaynak pikseli). |
-| **Round trip (gidiş-dönüş testi)** | Gerçek bir Texcelle dosyasını resme çevirip aracı bu resimle çalıştırmak ve kaç düğümün doğru çıktığını saymak. |
+| **Kaynak görüntü** | Dönüştürülecek desen resmi (jpg/png): kare pikselli, düz renkli, en/boy oranı halınınkinden en çok %10 farklı, her iki yönde düğümden çok pikselli. |
+| **Kaynak ölçeği (scale)** | Her düğüme kaç kaynak pikseli düştüğü. Her iki yönde 1'den büyük olmalı. |
 
 ### Gerçek tezgâh referansı
 
-`data/real_design/003_200X300_397X50_X.bmp` dosyası, gerçekten dokunmaya hazır
+`data/real_designs/003_200X300_397X50_X/003_200X300_397X50_X.bmp` dosyası,
+gerçekten dokunmaya hazır
 bir 200×300 cm Texcelle tasarımıdır. Aracın ürettiği her şey bu dosyaya
 benzemelidir:
 
@@ -148,29 +147,14 @@ Anlamı:
 
 Çıktı: `data/desen/desen.tiff` ve `data/desen/desen_palette.txt`.
 
-### Gölgeli Gemini render'ı, BMP çıktısı
-
-```bash
-.venv/bin/python -m img2texcelle render.jpg \
-  --width 200 --height 300 --reed 397 --density 500 \
-  --palette "#530C17,#FDECC7,#C49B66,#341D0E,#614027" \
-  --specks 12 --format bmp
-```
-
-`--specks 12`, gölge ve parlaklık artıklarını (aynı renk tonunun küçük
-kırıntılarını) siler. Varsayılan olarak kapalıdır, çünkü gerçek tasarımdaki
-küçük detayların yaklaşık %1'ini de siler.
-
-### Mevcut bir Texcelle dosyasının birebir ızgarası
+### BMP çıktısı
 
 ```bash
 .venv/bin/python -m img2texcelle desen.jpg \
-  --width 200 --height 300 --grid 793x1501 --reed 397 --density 500 \
-  --palette "..."
+  --width 200 --height 300 --reed 397 --density 500 \
+  --palette "#530C17,#FDECC7,#C49B66,#341D0E,#614027" \
+  --format bmp
 ```
-
-`--grid` verildiğinde çıktı tam olarak 793×1501 piksel olur; `--reed` ve
-`--density` sadece dosya başlığına yazılır.
 
 ### Otomatik palet (iplik renkleri bilinmiyorsa)
 
@@ -180,11 +164,11 @@ küçük detayların yaklaşık %1'ini de siler.
 ```
 
 Araç en fazla 8 renk seçer. Uyarı: tezgâh kalitesinde otomatik palet, sadece
-1 düğümlük çizgilerde kullanılan iplikleri kaçırır. Gerçek tasarımda
-`--colors 15` ile sadece %71 doğruluk alınır; sabit palet ile %98,7.
+1 düğümlük çizgilerde kullanılan iplikleri kaçırır; gerçek tasarımda `--colors 15`
+ile düğümlerin dörtte birinden fazlası yanlış ipliğe gider.
 
-Bir çalıştırma, 1696×2528 boyutundaki bir render için yaklaşık **60 saniye**
-sürer.
+Bir çalıştırma 3392×5056'lık bir kaynak için yaklaşık **4 dakika**, 1700×2500'lük
+bir kaynak için yaklaşık **60 saniye** sürer.
 
 ---
 
@@ -254,30 +238,29 @@ Kurallar:
    aynalanınca tam halıyı verir. Eksen net değilse (ör. yalnızca sol/sağ
    simetrik bir desende `--parts 4`) o eksen için uyarı verilir ve ortadan
    kesilir. Farklı boydaki parça ana araca verilirken en/boy oranı halıyla
-   uyuşmayabilir; o zaman `--fit` gerekir.
-   Not: `--symmetric` yalnızca **eksenin yerini** bulur; Gemini iki yarıyı
-   biraz farklı çizdiyse (motifler birebir aynı değilse) parçalar yine farklı
+   uyuşmayabilir; %10'a kadar fark esnetilerek geçilir, üstü hatadır.
+   Not: `--symmetric` yalnızca **eksenin yerini** bulur; iki yarı biraz
+   farklı çizildiyse (motifler birebir aynı değilse) parçalar yine farklı
    olur. Bunu dönüştürme aşaması çözer (`--symmetry`, bkz. bölüm 8).
 
 ---
 
 ## 7. Kaynak görüntü kuralları
 
-Araç yalnızca şu şartları sağlayan görüntülerle doğru çalışır:
+Aracın tek girdisi düz bir görüntü dosyasıdır (pratikte .jpg). Başka bir girdi
+yoktur: Texcelle dosyası ya da düğüm ölçeğinde resim verilmez. Görüntü şu
+şartları sağlamalıdır:
 
-1. **Düz renkli olmalı.** Gölge, gradyan, kabartma (bevel), doku olmamalı.
-   Gölgeli bir render, kenarlarda aynı renk tonunun ince şeritlerini üretir.
-   `--specks 12` bunun için bir çare, ama asıl çözüm düz bir kaynaktır.
-2. **Halının en/boy oranında olmalı.** 200×300 cm için 2:3. Alternatif olarak
-   düğüm oranında (793:1501) da olabilir. %2 tolerans vardır. Oran tutmuyorsa
-   araç hata verir; `--fit crop` (ortadan kes) veya `--fit stretch` (esnet)
-   ile geçilebilir.
-3. **Düğüm ızgarasından daha ince olmalı.** Her düğüme 1'den fazla kaynak
-   pikseli düşmeli. En iyisi düğüm başına 2 piksel: 397×500 kalitede 200×300 cm
-   için **1586×3002** piksel. Kaynak daha kabaysa (örneğin 600×900) araç hata
-   verir; deseni daha büyük render edin.
-4. Mevcut Gemini render'ları (1696×2528, 2:3) yaklaşık 2,1 piksel/düğüm verir
-   ve uygundur.
+1. **Kare pikselli olmalı.**
+2. **Düz renkli olmalı.** Gölge, gradyan, kabartma (bevel), doku olmamalı.
+   Gölgeli bir kaynak, kenarlarda aynı renk tonunun ince şeritlerini üretir;
+   tek çözüm düz bir kaynaktır.
+3. **En/boy oranı halının cm oranına yakın olmalı.** 200×300 cm için 2:3. %10'a
+   kadar fark kabul edilir: görüntü düğüm ızgarasına esnetilir ve bozulma
+   yüzde olarak ekrana yazılır. %10'un üstü hatadır.
+4. **Her iki yönde düğümden çok pikseli olmalı.** Her düğüme 1'den fazla
+   kaynak pikseli düşmeli. Kaynak daha kabaysa (örneğin 600×900) araç hata
+   verir; deseni daha büyük üretin.
 
 ---
 
@@ -290,7 +273,7 @@ Araç yalnızca şu şartları sağlayan görüntülerle doğru çalışır:
 | `src` | Kaynak görüntü dosyası (jpg/png). |
 | `--width` | Halı eni, cm. |
 | `--height` | Halı boyu, cm. |
-| Izgara için biri: `--reed` + `--density`, `--points` veya `--grid` | Düğüm ızgarasını belirler (aşağıda). |
+| `--reed` + `--density` | Düğüm ızgarasını belirler (aşağıda). |
 
 ### Izgara / kalite
 
@@ -298,10 +281,10 @@ Araç yalnızca şu şartları sağlayan görüntülerle doğru çalışır:
 |---|---|
 | `--reed N` | Yatayda metre başına düğüm (ör. 397). `--density` ile birlikte kullanılır. (TARAK SAYISI) |
 | `--density N` | Dikeyde metre başına sıra (ör. 500 = 10 cm'de 50 sıra). (ATKI SAYISI) |
-| `--points N` | Metrekare başına düğüm, kare düğüm varsayımıyla (ör. 1000000 → 1000×1000/m). |
-| `--grid WxH` | Tam ızgara boyutu (ör. `793x1501`). Mevcut bir Texcelle dosyasıyla aynı boyutu zorlamak için. Bu durumda `--reed/--density` sadece başlığa yazılır. |
-| `--fit crop` / `--fit stretch` | Görüntü oranı halıyla tutmuyorsa: ortadan kes ya da esnet. Verilmezse hata. |
-| `--no-rotate` | Görüntü ile halı yönü farklıysa (biri yatay biri dikey) araç görüntüyü 90° döndürür. Bu seçenek döndürmeyi kapatır. |
+
+Görüntü ile halı yönü farklıysa (biri yatay biri dikey) araç görüntüyü 90°
+döndürür. Görüntü oranı halının cm oranından en çok %10 farklı olabilir;
+fark esnetilerek geçilir ve ekrana yazılır (bkz. bölüm 7).
 
 ### Renk / palet
 
@@ -309,16 +292,13 @@ Araç yalnızca şu şartları sağlayan görüntülerle doğru çalışır:
 |---|---|---|
 | `--palette "#RRGGBB,#RRGGBB,..."` | yok | Sabit iplik renkleri. Verildiğinde `--colors` yok sayılır. **Önerilen.** |
 | `--colors N` | 8 | Otomatik palette en fazla kaç iplik seçileceği. |
-| `--merge D` | 12 | Otomatik palette bu delta E'den yakın renkler tek renge birleştirilir. |
---merge 12 ne yapıyor ? Aralarındaki delta E 12'den küçük olan renkleri tek renge birleştirir. 12 yüksek bir eşik — belirgin farklı sayılabilecek renkleri bile birleştiriyor. Yani agresif.
+| `--merge D` | 6 | Otomatik palette bu delta E'den yakın renkler tek renge birleştirilir. |
 
 ### Temizlik
 
 | Seçenek | Varsayılan | Açıklama |
 |---|---|---|
 | `--min-area N` | 20 mm²'lik düğüm sayısı (397×500'de 4) | Bu kadar düğümden küçük adacıklar çevresindeki baskın rengi alır. 0 = kapalı. |
-| `--specks N` | 0 (kapalı) | Gölgeli render'lar için: tek bir rengin çevrelediği ve o renkle aynı tona sahip, N düğümden küçük adacıkları o renge boyar. 397×500'de 12 iyi değerdir. Gerçek detayların ~%1'ini de siler, o yüzden kapalı. |
-| `--denoise N` | 0 (kapalı) | Kaynak görüntüye N boyutunda medyan filtresi. 1 piksellik çizgileri bozar; kullanmayın. |
 
 ### Simetri
 
@@ -331,12 +311,12 @@ Araç yalnızca şu şartları sağlayan görüntülerle doğru çalışır:
 | `--symmetry both` | | Her iki eksen zorlanır. |
 
 Simetrik eksende sol/üst yarı sağ/alt yarıya kopyalanır; karşılıklı motifler
-birebir aynı olur. İki yarı her yerde eşleşiyorsa (gerçek tasarım, Gemini
+birebir aynı olur. İki yarı her yerde eşleşiyorsa (gerçek tasarım, fom
 sol/sağ) oy adımında iki yarı birlikte karar verilir; yalnızca eksen yakınında
 eşleşiyorsa (fom üst/alt: madalyon aynı, taçlar farklı) yalnızca kopyalanır.
 Eksen ortada değilse resim eksen ortaya gelecek şekilde kırpılır; bu en/boy
-oranını bozabilir ve `--fit stretch` ya da `--fit crop` gerekir (fom:
-3392×4800 olur).
+oranını değiştirir ve fark %10'un altında kaldığı sürece esnetilerek geçilir
+(fom: 3392×4800 olur, %6,0 bozulma).
 
 ### Çıktı
 
@@ -356,7 +336,7 @@ oranını bozabilir ve `--fit stretch` ya da `--fit crop` gerekir (fom:
   1'den başlar.
 - Çözünürlük alanlarına tarak ve sıklık yazılır (ör. 397×500). Texcelle bunu
   kalite bilgisi olarak okur.
-- Boyut = düğüm ızgarası (ör. 794×1500 veya `--grid` ile 793×1501).
+- Boyut = düğüm ızgarası (ör. 794×1500).
 
 ### `<isim>_palette.txt`
 
@@ -376,7 +356,7 @@ Sütunlar: `indeks  R  G  B  #RRGGBB`. İndeks 0 listelenmez.
 Çalıştırma sırasında araç şunları yazar:
 
 - Düğüm ızgarası, düğüm boyutu (mm), düğüm başına kaynak pikseli, `min area`
-- Döndürme / kesme / simetri tespiti bilgileri
+- Döndürme / kesme / simetri tespiti / oran bozulması bilgileri
 - Kaç kenar karışım pikselinin ayrıştırıldığı
 - Kaç düğümün adacık temizliğinde yeniden boyandığı
 - Her ipliğin çıktıdaki yüzdesi
@@ -388,12 +368,12 @@ Sütunlar: `indeks  R  G  B  #RRGGBB`. İndeks 0 listelenmez.
 
 Ana fikir: kaynak görüntü düğüm ızgarasından daha ince olduğu için **her düğüm,
 alanının çoğunu kaplayan ipliği alır.** Bu basit fikri doğru uygulamak için
-yedi adım gerekir. Sıra önemlidir.
+altı adım gerekir. Sıra önemlidir.
 
 ### Adım 1 – Yön, simetri, en/boy oranı (`grid.py`, `symmetry.py`)
 
 1. **Döndürme:** Görüntü yatay, halı dikeyse (veya tersi) görüntü 90°
-   döndürülür. `--no-rotate` ile kapatılır.
+   döndürülür.
 2. **Eksen ölçümü** (`symmetry.measure_axis`, `img2texcelle.split --symmetric`
    ile ortak): Görüntü gri tona çevrilip en çok 8 kat küçültülür ve merkezden
    ±%25 uzağa kadar her eksen adayı denenir. Karşılaştırma yalnızca adayın
@@ -405,29 +385,25 @@ yedi adım gerekir. Sıra önemlidir.
    hata (0 = kusursuz ayna, 1 = eksen yok). 0,7'nin altındaysa eksen kabul
    edilir. Ölçülen (2026-09-17): gerçek tasarım 0,00; WhatsApp taraması 0,16;
    fom sol/sağ 0,12, üst/alt **0,57** (madalyon merkezden 128 px yukarıda);
-   simetrisiz Gemini çeyrek render'ları 0,79–0,99. **eşleşme** = o eksende
+   simetrisiz fom çeyrek görüntüleri 0,79–0,99. **eşleşme** = o eksende
    bütün görüntünün hatası / 32 px kaydırma hatası (eski ölçüt): 0,35'in
-   altındaysa iki yarı her yerde eşleşir (gerçek tasarım 0,00–0,02, Gemini
-   sol/sağ 0,07–0,27), değilse yalnızca eksen yakınında (fom üst/alt 1,12).
+   altındaysa iki yarı her yerde eşleşir (gerçek tasarım 0,00–0,02, fom
+   sol/sağ 0,14), değilse yalnızca eksen yakınında (fom üst/alt 1,12).
 3. **Ekseni ortalama:** Eksen ortada değilse görüntü, eksen düğüm ızgarasının
-   tam ortasına gelecek şekilde kırpılır (fom: 3392×4800; oran kontrolü için
-   `--fit` gerekir). Zorlanan bir eksen (`--symmetry lr/tb/both`) de ölçülen
+   tam ortasına gelecek şekilde kırpılır (fom: 3392×4800). Zorlanan bir eksen (`--symmetry lr/tb/both`) de ölçülen
    yerinde kullanılır; net değilse uyarıyla ortada kalır.
-4. **Oran kontrolü:** Görüntü oranı, halının cm oranıyla veya düğüm ızgarası
-   oranıyla %2 içinde uyuşmalı. Uyuşmazsa `--fit` gerekir, yoksa hata.
-5. **Ölçek kontrolü:** `scale = sqrt(sx*sy)` (düğüm başına kaynak pikseli)
-   1'den büyük olmalı, yoksa hata.
+4. **Oran kontrolü:** Görüntü oranı halının cm oranından en çok %10 farklı
+   olabilir; üstü hatadır. Altında görüntü adım 4'te düğüm ızgarasına
+   esnetilir ve bozulma yüzde olarak yazılır (fom kırpmadan sonra %6,0,
+   kırpmasız %0,6).
+5. **Ölçek kontrolü:** Her iki yönde düğüm başına 1'den fazla kaynak pikseli
+   düşmeli, yoksa hata.
 
 **Dikkat:** Eksen bulunan bir desende sadece bir tarafta olan motif kopyada
 kaybolur. Böyle bir durumda `--symmetry none` ya da yalnızca doğru ekseni
 (`--symmetry lr` / `tb`) verin.
 
-### Adım 2 – İsteğe bağlı medyan gürültü giderme
-
-`--denoise` verildiğinde kaynak görüntüye medyan filtresi uygulanır.
-Varsayılan kapalı, çünkü 1 piksellik çizgileri kırar.
-
-### Adım 3 – Palet (`color.py`)
+### Adım 2 – Palet (`color.py`)
 
 `--palette` verildiyse doğrudan kullanılır.
 
@@ -440,7 +416,7 @@ renkleri palete girmez. `--merge` değerinden yakın kümeler birleştirilir,
 Tezgâh kalitesinde otomatik palet yetersizdir: sadece 1 düğümlük çizgilerde
 kullanılan iplikler düz piksel örneğine hiç girmez.
 
-### Adım 4 – Kaplama ayrıştırma (unmixing) (`color.smooth_chroma`, `unmix.py`)
+### Adım 3 – Kaplama ayrıştırma (unmixing) (`color.smooth_chroma`, `unmix.py`)
 
 Bu adım, aracın kalbidir.
 
@@ -461,15 +437,15 @@ Bu adım, aracın kalbidir.
    yuvarlaması) içinde en yakın saf renk olarak görünüyorsa izinlidir. Aksi
    halde 15 iplikle hemen her renk, ilgisiz iki rengin arasındaki bir doğru
    üzerine düşer (hafif soluk bir magenta çizgi "%30 mor + %70 turuncu" olarak
-   açıklanmıştı ve doğruluk %98'den %94'e düşmüştü).
+   açıklanmış, bütün çizgiler iplik değiştirmişti).
 
 3. **İnce karışım şeritleri:** Mavi ile krem arasında gri varsa, bulanık bir
    mavi/krem kenarı da bulanık bir 1 piksellik mavi çizgi de gri görünür.
    Geniş bir gri alana bağlı olmayan ince gri şeritler, karıştırdığı iki renge
-   ayrıştırılır. Bu adım atlandığında tam sayı olmayan ölçekli bir render'da
-   çizgi hataları %19'dan %34'e çıkmıştı.
+   ayrıştırılır. Bu adım atlanınca bulanık 1 piksellik çizgiler ara renk gibi
+   görünür ve çizgi hataları neredeyse iki katına çıkar.
 
-### Adım 5 – Kaplama oyu (`vote.py`)
+### Adım 4 – Kaplama oyu (`vote.py`)
 
 1. **Alan ortalaması:** Kaplama oranları BOX yöntemiyle düğüm ızgarasına
    küçültülür. BOX, tam alan ortalamasıdır: her düğüm, alanının her iplik
@@ -480,13 +456,12 @@ Bu adım, aracın kalbidir.
    karar verilir. Yalnızca eksen yakınında eşleşen bir eksende (fom üst/alt)
    ortalama yapılmaz: farklı çizilmiş iki taç üst üste binerdi.
 3. **Argmax:** Her düğüm en çok kaplayan ipliği alır. Bu yumuşak kaplama,
-   piksel etiketlerinin çoğunluğundan ("sert") daha iyidir: gidiş-dönüşte
-   %98,8'e karşı %98,2 (2 px/düğüm), %99,3'e karşı %97,8 (tam sayı olmayan
-   ölçek).
+   piksel etiketlerinin çoğunluğundan ("sert") daha iyidir, özellikle tam
+   sayı olmayan ölçekte.
 4. **Düz çizgileri düzeltme (`straighten_runs`):** Bir bant kenarı veya ince
    çizgi bir düğüm sırasının tam ortasından geçiyorsa, o sıradaki her düğüm
    iki renkle yaklaşık yarı yarıya kaplanır. Tek tek karar JPEG gürültüsüyle
-   rastgele döner ve dümdüz bir kenar tırtıklı çıkar (bir Gemini render'ında
+   rastgele döner ve dümdüz bir kenar tırtıklı çıkar (bir kaynakta
    üst bordür 440 sütunda 1. sırada, 254 sütunda 2. sırada başlıyordu).
    Çözüm: kararsız düğümler (en az değişen yöndeki ortalama kaplama 0,6'nın
    altında ve kendi kaplaması 0,85'in altında, böylece temiz noktalar ve
@@ -494,18 +469,14 @@ Bu adım, aracın kalbidir.
    grup, grubun tamamındaki sert piksel etiketlerinin çoğunluğunu alır. Kısa
    gruplar (kavisli kenarlar, küçük şekiller) kendi kararını korur.
 
-### Adım 6 – Temizlik (`cleanup.py`, `symmetry.mirror_copy`)
+### Adım 5 – Temizlik (`cleanup.py`, `symmetry.mirror_copy`)
 
 1. **Adacık temizliği (`remove_islands`):** `--min-area`'dan küçük bağlı
    parçalar, 1 düğümlük çevresindeki en yaygın rengi alır. Değişiklik
    kalmayana kadar tekrarlanır. Gerçek tasarımda `min area 4` ile 1,19 milyon
    düğümden yalnızca 494'üne dokunulur.
-2. **Gölge kırıntıları (`remove_shading_specks`, yalnızca `--specks`):** Tek bir
-   rengin en az %80 çevrelediği, o renkle aynı Lab tonuna sahip (25° içinde ya
-   da biri nötr) ve `--specks` değerinden küçük parçalar çevreleyen rengi alır.
-   Koyu kırmızı üzerindeki krem bir nokta (farklı ton) korunur.
-3. **Ayna kopyası (`mirror_copy`):** Simetrik eksenlerde sol/üst yarı sağ/alt
-   yarıya birebir kopyalanır. Bu olmadan bir Gemini çıktısı kendi aynasıyla
+2. **Ayna kopyası (`mirror_copy`):** Simetrik eksenlerde sol/üst yarı sağ/alt
+   yarıya birebir kopyalanır. Bu olmadan bir çıktı kendi aynasıyla
    yalnızca %93,8 eşleşiyordu; dokumacının ilk fark edeceği şey simetri
    bozukluğudur.
 
@@ -513,7 +484,7 @@ Bu adım, aracın kalbidir.
 tezgâh ızgarasında her 1 düğümlük çapraz merdivenin köşe düğümünün 3 yabancı
 komşusu vardır; yumuşatma gerçek tasarımın %3'ünü silmişti.
 
-### Adım 7 – Dosyaları yazma (`output.py`)
+### Adım 6 – Dosyaları yazma (`output.py`)
 
 8 bit paletli TIFF veya BMP, sıkıştırmasız, indeks 0 ayrılmış, çözünürlük
 alanlarında tarak/sıklık; yanına `<isim>_palette.txt`. İki biçim de Texcelle
@@ -529,37 +500,26 @@ Testler geçse bile asıl hatalar görsel ve sayısaldır.
 
 1. Kaynak görüntüyü BOX ile düğüm ızgarasına küçültün, çıktıyla aynı bölgeyi
    kesin, ikisini NEAREST ile büyütün ve yan yana bakın.
-2. Gemini render'ında şunlara bakın: bir köşe, göbek (medalyon), üst bordür
+2. Şunlara bakın: bir köşe, göbek (medalyon), üst bordür
    bandı (düz mü?), sol ve sağ yarı aynı mı?
 3. Çıktıda `--min-area`'dan küçük bağlı parça kalmamış olmalı (8 komşuluk,
    `scipy.ndimage.label`).
 
-### Gidiş-dönüş testi (gerçek tasarım)
+### Ortada olmayan eksen (fom)
 
-Her değişiklikte tek bir sayı:
+`data/fomggggggbro/fomggggggbro.jpg` (3392×5056, madalyon merkezden 128 px
+yukarıda) `--width 200 --height 300 --reed 397 --density 500 --palette
+<_6_palette.txt'deki renkler> --format bmp` ile çalıştırıldığında sol/sağ
+ekseni ortada, üst/alt ekseni 2399,5. satırda bulmalı, resmi 3392×4800'e
+kırpmalı, `6.0% distortion` yazmalı ve `fomggggggbro_3.bmp` ile piksel piksel
+aynı, iki yönde de simetrik bir çıktı vermelidir. Aynı komut `--symmetry lr`
+ile `0.6% distortion` yazmalı ve `fomggggggbro_6.bmp` ile piksel piksel aynı
+olmalıdır (2026-09-17 referansları).
 
-1. `data/real_design/003_200X300_397X50_X.bmp` dosyasını düz RGB olarak
-   düğüm başına 2 piksel boyutunda render edin (`1586×3002`, NEAREST,
-   Gaussian bulanıklık 0,7, JPEG q90) ve tam sayı olmayan bir ölçekte
-   (`1792×2688`, LANCZOS, JPEG q92).
-2. İkisini de `--grid 793x1501 --reed 397 --density 500 --palette <gerçek
-   BMP'nin 15 rengi>` ile dönüştürün.
-3. Çıktı indekslerini en yakın RGB ile gerçek palete eşleyin ve eşleşen
-   düğümleri sayın; 1 düğümlük çizgilerdeki düğümleri ayrı sayın.
-
-2026-09-16 tarihli seviyeler:
-
-| Ölçek | Toplam doğruluk | Çizgi hatası | Diğer hata |
-|---|---|---|---|
-| 2 px/düğüm | %98,71 | %5,8 | ≤ %0,1 |
-| Tam sayı olmayan | %99,29 | %2,9 | ≤ %0,1 |
-
-`--symmetry none` yalnızca oy adımını ölçer (98,6 / 99,3).
-
-### Gemini regresyonu
+### Başka bir kaynakta regresyon
 
 `data/sonGemini_Generated_Image_t4zyvst4zyvst4zy.jpeg` dosyası
-`--reed 397 --density 500 --palette "#510A15,#FEF7D4,#D5A556,#774133" --specks 12`
+`--reed 397 --density 500 --palette "#510A15,#FEF7D4,#D5A556,#774133"`
 ile (ve bir kez `--colors 8` ile) önceki çıktıyla piksel piksel aynı kalmalıdır.
 Oy veya temizlik adımına dokunmadan önce eski çıktının bir kopyasını saklayın.
 
@@ -569,19 +529,19 @@ Oy veya temizlik adımına dokunmadan önce eski çıktının bir kopyasını sa
 
 | Hata mesajı / durum | Sebep | Çözüm |
 |---|---|---|
-| `give --reed and --density, --points, or --grid` | Izgara belirtilmedi. | `--reed 397 --density 500` ekleyin. |
+| `the following arguments are required: --reed, --density` | Izgara belirtilmedi. | `--reed 397 --density 500` ekleyin. |
 | `source image not found` | Dosya yolu yanlış. | Yolu kontrol edin. |
 | `... already exists; remove it or rename the source` | `data/<isim>/` içinde aynı adlı kaynak zaten var. | Dosyayı yeniden adlandırın veya `data/<isim>/` içindeki dosyayı doğrudan kaynak olarak verin. |
-| `image ratio ... matches neither the carpet ratio ... nor the knot grid ratio` | Görüntü oranı halıyla uyuşmuyor. | `--fit crop` (önerilen) veya `--fit stretch`, ya da kaynağı doğru oranda üretin (1586×3002). |
-| `source is coarser than the knot grid` | Görüntü çok küçük, düğüm başına 1 pikselden az. | Deseni daha büyük render edin (2 px/düğüm). |
+| `image ratio ... is N% off the carpet ratio ...` | Görüntü oranı halının cm oranından %10'dan fazla farklı. | Kaynağı halının oranında üretin (200×300 cm için 2:3). |
+| `source ... is coarser than the knot grid` | Görüntü çok küçük: en az bir yönde düğüm başına 1 pikselden az. | Deseni daha büyük üretin. |
 | `bad palette color` | Palet hex değeri hatalı. | `#RRGGBB` biçimini kullanın, virgülle ayırın. |
 | `2 parts need --axis lr ... or tb` (split) | `--parts 2` verildi ama eksen yok. | `--axis lr` ya da `--axis tb` ekleyin. |
 | `unknown part(s) ...; valid: ...` (split) | `--keep` içinde o modda olmayan bir parça adı var. | 2 parçada `left,right` / `top,bottom`, 4 parçada `tl,tr,bl,br` kullanın. |
 | `warning: odd width ...` (split) | Resmin eni/boyu tek sayı. | Hata değil: orta piksel iki parçaya da girer. Tam yarı isteniyorsa resmi çift boyuta getirin. |
-| Üst bordür tırtıklı | Kenar bir düğüm sırasının ortasından geçiyor. | Normalde `straighten_runs` çözer; tekrar oluşursa kaynağın 2 px/düğüm olduğundan emin olun. |
+| Üst bordür tırtıklı | Kenar bir düğüm sırasının ortasından geçiyor. | Normalde `straighten_runs` çözer; tekrar oluşursa kaynağın düğüm ızgarasından yeterince ince olduğundan emin olun. |
 | Karşılıklı motifler farklı | Simetri tespit edilmedi. | `--symmetry lr` / `tb` / `both` ile zorlayın. |
 | Bir tarafta olan motif kayboldu | Neredeyse simetrik desen, eksen tespit edildi ve ortalandı. | `--symmetry none` ya da yalnızca doğru ekseni zorlayın. |
-| Kenarlarda aynı rengin ince kırıntıları | Gölgeli/kabartmalı render. | `--specks 12`; asıl çözüm düz renkli kaynak. |
+| Kenarlarda aynı rengin ince kırıntıları | Gölgeli/kabartmalı kaynak. | Düz renkli bir kaynak üretin. |
 | İnce çizgiler kayıp | Otomatik palet o ipliği seçmedi. | `--palette` ile iplik renklerini elle verin. |
 
 ---
@@ -594,17 +554,22 @@ Oy veya temizlik adımına dokunmadan önce eski çıktının bir kopyasını sa
   renkten saçak pikseller oluşur.
 - **Piksel başına en yakın renk + adacık silme:** ince çizgiler tespih gibi
   parçalanır.
-- **Çizgi/iskelet tespiti (eski kaba kaynak yolu):** gidiş-dönüş %78'e karşı
-  %98; ince çizgileri kalınlaştırır. 2026-09-16'da kaldırıldı.
+- **Çizgi/iskelet tespiti (eski kaba kaynak yolu):** gerçek tasarımda kaplama
+  oyundan çok daha kötü; ince çizgileri kalınlaştırır. 2026-09-16'da kaldırıldı.
 - **Düğüm başına "tutarlı oy" (belirsiz düğümü 9 düğümlük yön ortalamasıyla
-  değiştirmek):** −%1,5, çünkü iki sıraya yayılan 1 düğümlük çizgiler iki
-  sırada da berabere kalır.
+  değiştirmek):** gerçek tasarımda düğüm kaybettirir, çünkü iki sıraya yayılan
+  1 düğümlük çizgiler iki sırada da berabere kalır.
 - **Kaynak kaplamasına Gaussian yumuşatma:** 2 piksellik çizgileri aralıklarına
   bulaştırır.
 - **Düğüm ızgarasında köşe yumuşatma / mod filtresi:** 1 düğümlük çapraz
   merdivenlerin köşelerini siler (gerçek tasarımın %3'ü).
 - **Dört çeyreği ortalamak:** her zaman en iyisini seçmez; dokumacı önce tam
   simetriyi fark eder.
+- **Kaynağa özel düğmeler** `--specks` (gölgeli kaynakların aynı tondaki
+  kırıntılarını boyamak; gerçek detayların ~%1'ini de siliyordu), `--denoise`
+  (medyan filtre; 1 piksellik çizgileri kırar), `--fit crop` / `--fit stretch`,
+  `--points`, `--no-rotate`, `--grid` ve oran kontrolündeki düğüm oranı
+  kabulü: 2026-09-17'de kaldırıldı; yerini bölüm 7'deki kaynak kuralları aldı.
 
 ---
 
@@ -616,17 +581,17 @@ img2texcelle/
   cli.py        argparse -> Options, data/<isim>/ klasörü, convert()
   options.py    Options veri sınıfı (tüm ayarlar)
   workspace.py  data/<isim>/: kaynağı taşı, <isim>[_N].tiff/bmp + _palette.txt seç
-  pipeline.py   convert(src, dst, opts): yukarıdaki 7 adım, ~100 satır
-  grid.py       düğüm ızgarası + başlık ppm, düğüm boyutu, döndürme/oran, ölçek kontrolü
+  pipeline.py   convert(src, dst, opts): yukarıdaki 6 adım, ~100 satır
+  grid.py       düğüm ızgarası + başlık ppm, düğüm boyutu, döndürme, oran kontrolü (%10), ölçek kontrolü
   symmetry.py   eksen ölçümü (measure_axis), eksen ortalama, ayna ortalaması ve kopyası
   color.py      rgb_to_lab, parse_palette, flat_mask, auto_palette (k-means), smooth_chroma
   unmix.py      unmix (iki renk kaplama oranları), blend_pairs, unmix_thin_blends
   vote.py       resize_alpha (BOX), directional_mean, straighten_runs, vote_knots
-  cleanup.py    remove_islands, remove_shading_specks
+  cleanup.py    remove_islands
   output.py     save_indexed (TIFF/BMP, indeks 0 ayrılmış, dpi = ppm), write_palette_txt
   split.py      python -m img2texcelle.split: ayna ekseninden 2/4 parça -> data/cropped_images/<isim>/
 tests/
-  test_smoke.py      sentetik 2:3 desen uçtan uca; kaba kaynak ve oran hatası testleri
+  test_smoke.py      sentetik 2:3 desen uçtan uca; kaba kaynak, oran hatası ve %10 altı oran farkı testleri
   test_workspace.py  data/<isim>/ klasör kuralları (taşıma, _2/_3 adlandırma, çakışma)
   test_split.py      bölme: kutular, eksendeki piksel, ortada olmayan eksen, --symmetric/--shift, --keep, klasör kuralı
   test_symmetry.py   measure_axis: ortada / %20 kaymış / yalnızca eksen yakınında simetrik / simetrisiz; find_and_centre modları
