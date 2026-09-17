@@ -1,6 +1,7 @@
 """End-to-end smoke test on a synthetic flat design: the output must contain
 only palette colors (indices 1..K), leave index 0 unused and carry
-reed/density in the resolution fields; the aspect-ratio and source-scale rules."""
+reed/density in the resolution fields; the carpet-size (--stretch) and
+source-scale rules."""
 
 import numpy as np
 import pytest
@@ -65,15 +66,48 @@ def test_coarse_source_is_an_error(tmp_path):
 def test_aspect_mismatch_is_an_error(tmp_path):
     src = tmp_path / "wide.jpg"
     make_design(str(src), 600, 600)  # 50% off the 2:3 carpet
-    with pytest.raises(SystemExit, match="within 10%"):
+    with pytest.raises(SystemExit, match="use --stretch"):
         convert(str(src), str(tmp_path / "wide.tiff"),
                 Options(20, 30, reed=397, density=500, palette=parse_palette(PALETTE)))
+    with pytest.raises(SystemExit, match="would distort it by 50.0%"):
+        convert(str(src), str(tmp_path / "wide.tiff"),
+                Options(20, 30, reed=397, density=500, palette=parse_palette(PALETTE),
+                        stretch=True))
 
 
-def test_small_aspect_mismatch_is_resized_and_reported(tmp_path, capsys):
+def test_small_aspect_mismatch_stretch_or_follow_the_image(tmp_path, capsys):
     src = tmp_path / "wide.jpg"
     make_design(str(src), 420, 600)  # ratio 0.70 vs 0.667: 5% off
+    # --stretch: the requested size, the image is stretched onto the knot grid
     labels, _ = convert(str(src), str(tmp_path / "wide.tiff"),
-                        Options(20, 30, reed=397, density=500, palette=parse_palette(PALETTE)))
+                        Options(20, 30, reed=397, density=500, palette=parse_palette(PALETTE),
+                                stretch=True))
     assert labels.shape == (150, 79)
     assert "5.0% distortion" in capsys.readouterr().out
+    # default: the width is kept, the height follows the image: 20 x 28.6 cm
+    labels, _ = convert(str(src), str(tmp_path / "wide2.tiff"),
+                        Options(20, 30, reed=397, density=500, palette=parse_palette(PALETTE)))
+    assert labels.shape == (143, 79)
+    out = capsys.readouterr().out
+    assert "*** CARPET 20 x 28.6 cm, KNOT GRID 79 x 143 ***" in out
+    assert "4.8% shorter" in out and "--stretch fits 30 cm" in out
+
+
+def test_off_centre_axis_keeps_the_larger_half(tmp_path, capsys):
+    """The design cut 40 px below its top/bottom axis: the bottom half (340
+    rows) is kept and mirrored, the carpet grows to 20 x 34 cm; with
+    --stretch the top half (260 rows, 13% off) loses to the bottom half
+    (340 rows, 11%) but both exceed 10%."""
+    src = tmp_path / "cut.jpg"
+    make_design(str(src))
+    rgb = np.asarray(Image.open(src))[40:]  # 400x560, axis at row 259.5
+    Image.fromarray(rgb).save(src, quality=92)
+    labels, _ = convert(str(src), str(tmp_path / "cut.tiff"),
+                        Options(20, 30, reed=397, density=500, palette=parse_palette(PALETTE)))
+    out = capsys.readouterr().out
+    assert "top/bottom axis at row 259.5 (20 px above the centre)" in out
+    assert "bottom half (300 rows) kept and mirrored onto the top (260 rows): image 400x600" in out
+    assert "*** CARPET 20 x 30.0 cm, KNOT GRID 79 x 150 ***" not in out  # exact: no banner
+    assert labels.shape == (150, 79)
+    assert np.array_equal(labels, labels[::-1]) and np.array_equal(labels, labels[:, ::-1])
+    assert labels[75, 40] == 0 and labels[75, 8] == 1 and labels[57, 24] == 2

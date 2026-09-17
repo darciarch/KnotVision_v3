@@ -9,12 +9,21 @@ positions, the fine ornament never matches). So the axis is judged from the
 rows that meet at the cut, not from the whole image, and a second number
 tells whether the halves match everywhere (then their evidence may be
 averaged) or only near the axis (then one half is copied).
+
+An axis off centre splits the image into two halves of different size. One
+of them is kept and mirrored onto the other (`mirror_halves`), so the axis
+becomes the image centre and nothing is cropped: without --stretch the
+larger half (the carpet height then follows the image), with --stretch the
+half whose mirrored image fits the carpet ratio with the least distortion.
 """
 
+import itertools
 import math
 
 import numpy as np
 from PIL import Image
+
+from .grid import distortion
 
 AXIS_CONTRAST = 0.7   # measure_axis contrast below which an axis is trusted
 EXACT_MATCH = 0.35    # measure_axis match below which the halves match everywhere
@@ -55,7 +64,7 @@ def measure_axis(img, axis, margin=0.25, band=0.15, far=32):
 
     Returns (shift, contrast, match). `shift` is in full-res px, positive =
     axis right/down of the centre, axis at (size - 1 + shift) / 2 px
-    (`crop_to_axis` removes `shift` px on one side to centre it). The search
+    (`half_sizes` / `mirror_half` split and centre the image there). The search
     covers +-`margin` of the size on a greyscale reduced by up to 8x (at least
     128 px on the short side), comparing only the rows within +-`band` of the
     size around each candidate axis, then refines at full resolution.
@@ -105,31 +114,64 @@ def describe_axis(axis, size, shift):
     return f"at {unit} {pos:g} ({where})"
 
 
-def crop_to_axis(img, shift_x=0, shift_y=0):
-    """Crop the image symmetrically around a mirror axis off centre by
-    (shift_x, shift_y) px (the shifts from `measure_axis`, positive = axis
-    right/down of the centre), so that the axis becomes the image centre and
-    the knot grid mirrors onto itself."""
-    w, h = img.size
-    x0, x1 = max(0, shift_x), w + min(0, shift_x)
-    y0, y1 = max(0, shift_y), h + min(0, shift_y)
-    return img.crop((x0, y0, x1, y1))
+def half_sizes(size, shift):
+    """Pixels in the two halves (left/top, right/bottom) cut at the mirror
+    axis (size - 1 + shift) / 2 (`shift` from `measure_axis`); a pixel row
+    on the axis counts in both halves. fom: 5056 rows, shift -256 -> 2400
+    above and 2656 below the axis."""
+    twice = size - 1 + shift  # the axis is at twice / 2
+    return twice // 2 + 1, size - (twice + 1) // 2
 
 
-def find_and_centre(img, mode="auto"):
-    """Decide the symmetric axes (`mode`: auto / none / lr / tb / both) and
-    crop the image so an off-centre axis becomes the centre.
+def mirrored_size(size, shift, side):
+    """Size of the image along an axis after `mirror_half` keeps `side`
+    ('left' / 'top' = the first half, anything else the second)."""
+    first, second = half_sizes(size, shift)
+    on_axis = (size - 1 + shift) % 2 == 0
+    return 2 * (first if side in ("left", "top") else second) - on_axis
+
+
+def mirror_half(img, axis, shift, side):
+    """Keep the `side` half ('left' / 'right' for axis 1, 'top' / 'bottom'
+    for axis 0) of the mirror axis (size - 1 + shift) / 2 and replace the
+    other half with its mirror image, so the axis becomes the image centre.
+    The image grows or shrinks along `axis` to `mirrored_size`; a pixel row
+    on the axis stays single."""
+    a = np.asarray(img)
+    size = a.shape[axis]
+    twice = size - 1 + shift
+    on_axis = int(twice % 2 == 0)
+
+    def rows(lo, hi):
+        sl = [slice(None)] * a.ndim
+        sl[axis] = slice(lo, hi)
+        return a[tuple(sl)]
+
+    if side in ("left", "top"):
+        keep = rows(0, twice // 2 + 1)
+        out = np.concatenate([keep, np.flip(rows(0, twice // 2 + 1 - on_axis), axis)], axis)
+    else:
+        start = (twice + 1) // 2
+        keep = rows(start, size)
+        out = np.concatenate([np.flip(rows(start + on_axis, size), axis), keep], axis)
+    return Image.fromarray(np.ascontiguousarray(out))
+
+
+def find_axes(img, mode="auto"):
+    """Decide the symmetric axes (`mode`: auto / none / lr / tb / both).
 
     `auto` takes an axis whose contrast is below AXIS_CONTRAST; `lr` / `tb` /
     `both` take the axis regardless, at the measured position when it is
-    clear, otherwise at the centre with a warning (a guess could crop the
-    image by a random amount). Returns (img, copy_lr, copy_tb, avg_lr, avg_tb):
-    `copy_*` = the axis is taken (the left/top half is copied onto the other,
-    `mirror_copy`), `avg_*` = the halves also match everywhere (match below
-    EXACT_MATCH), so their coverage may be averaged (`mirror_average`).
+    clear, otherwise at the centre with a warning (a guess could mirror the
+    image at a random place). Returns {axis: (shift, average)} for the taken
+    axes (1 = left/right, 0 = top/bottom): `shift` is the axis position from
+    `measure_axis` (0 = centre), `average` says the halves match everywhere
+    (match below EXACT_MATCH), so their coverage may be averaged
+    (`mirror_average`); either way the kept half is copied onto the other
+    after cleanup (`mirror_copy`).
     """
     axes = {"auto": [1, 0], "both": [1, 0], "lr": [1], "tb": [0], "none": []}[mode]
-    taken = {}  # axis -> (shift, match)
+    taken = {}
     for ax in axes:
         size = img.size[0] if ax == 1 else img.size[1]
         shift, contrast, match = measure_axis(img, ax)
@@ -143,17 +185,62 @@ def find_and_centre(img, mode="auto"):
                   f"> {AXIS_CONTRAST}; best candidate {where}); forced, using the centre",
                   flush=True)
             shift, match, where = 0, 1.0, describe_axis(ax, size, 0)  # never average
-        taken[ax] = (shift, match)
+        taken[ax] = (shift, match < EXACT_MATCH)
         print(f"symmetry: {AXIS_NAMES[ax]} axis {where}, contrast {contrast:.2f}, halves "
               f"match {match:.2f} -> " + ("average + copy" if match < EXACT_MATCH else "copy only"),
               flush=True)
     if not taken:
         print("symmetry: none", flush=True)
-    elif any(s for s, _ in taken.values()):
-        img = crop_to_axis(img, taken.get(1, (0,))[0], taken.get(0, (0,))[0])
-        print(f"image cropped to {img.width}x{img.height} to centre the mirror axis", flush=True)
-    avg = {ax: m < EXACT_MATCH for ax, (_, m) in taken.items()}
-    return img, 1 in taken, 0 in taken, avg.get(1, False), avg.get(0, False)
+    return taken
+
+
+def mirror_halves(img, axes, stretch_to=None):
+    """Make every taken axis the image centre by keeping one half and
+    replacing the other with its mirror (`mirror_half`); an axis already at
+    the centre leaves the image alone (both halves keep their evidence).
+
+    `axes` is `find_axes`' result. Without `stretch_to` the larger half is
+    kept: nothing is cropped, the image only grows (fom: 3392x5056 with the
+    axis 128 px above the centre becomes 3392x5312 from its bottom half) and
+    the carpet height follows the new image ratio (`grid.fit_carpet`). With
+    `stretch_to` = (width_cm, height_cm) the halves whose mirrored image is
+    closest to the carpet ratio are kept (fom: the bottom half, 4.4%
+    distortion, against 6.0% for the top half); the image is then stretched
+    onto the knot grid. Returns (img, sides) with sides = {axis: 'left' /
+    'right' / 'top' / 'bottom'} for every taken axis, the half `mirror_copy`
+    copies from."""
+    w, h = img.size
+    choices = {}  # axis -> {side: mirrored size}
+    for ax, (shift, _) in axes.items():
+        size, names = (w, ("left", "right")) if ax == 1 else (h, ("top", "bottom"))
+        choices[ax] = {name: mirrored_size(size, shift, name) for name in names}
+
+    def image_size(sides):
+        return (choices[1][sides[1]] if 1 in sides else w,
+                choices[0][sides[0]] if 0 in sides else h)
+
+    if stretch_to is None:
+        sides = {ax: max(c, key=c.get) for ax, c in choices.items()}  # ties -> left/top
+    else:
+        combos = [dict(zip(choices, names)) for names in itertools.product(*choices.values())]
+        sides = min(combos, key=lambda c: distortion(*image_size(c), *stretch_to)) if combos else {}
+    for ax, side in sides.items():
+        shift = axes[ax][0]
+        if shift == 0:
+            continue
+        other = next(n for n in choices[ax] if n != side)
+        size, unit = (w, "columns") if ax == 1 else (h, "rows")
+        kept, dropped = half_sizes(size, shift)
+        if side in ("right", "bottom"):
+            kept, dropped = dropped, kept
+        img = mirror_half(img, ax, shift, side)
+        alt = {**sides, ax: other}
+        why = "the larger half" if stretch_to is None else (
+            f"{100 * distortion(*image_size(sides), *stretch_to):.1f}% distortion against "
+            f"{100 * distortion(*image_size(alt), *stretch_to):.1f}% with the {other} half")
+        print(f"symmetry: {side} half ({kept} {unit}) kept and mirrored onto the {other} "
+              f"({dropped} {unit}): image {img.width}x{img.height} ({why})", flush=True)
+    return img, sides
 
 
 def mirror_average(a, lr, tb):
@@ -166,11 +253,16 @@ def mirror_average(a, lr, tb):
     return a
 
 
-def mirror_copy(labels, lr, tb):
-    """Make the label map exactly symmetric: the left (top) half is copied
-    onto the right (bottom) half; a middle column/row stays as it is."""
+def mirror_copy(labels, lr=None, tb=None):
+    """Make the label map exactly symmetric: the `lr` half ('left' / 'right')
+    is copied onto the other, then the `tb` half ('top' / 'bottom'); None
+    leaves that axis alone. A middle column/row stays as it is."""
     h, w = labels.shape
-    if lr:
+    if lr == "left":
         labels[:, w - w // 2:] = labels[:, :w // 2][:, ::-1]
-    if tb:
+    elif lr == "right":
+        labels[:, :w // 2] = labels[:, w - w // 2:][:, ::-1]
+    if tb == "top":
         labels[h - h // 2:] = labels[:h // 2][::-1]
+    elif tb == "bottom":
+        labels[:h // 2] = labels[h - h // 2:][::-1]

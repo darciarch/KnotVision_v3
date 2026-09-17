@@ -38,7 +38,7 @@ Kısaca: **düz renkli halı deseni görüntüsü → dokunabilir Texcelle dosya
 | **Density (sıklık)** | Dikeyde metre başına sıra sayısı. Örnek: 500 → 1 metrede 500 sıra (10 cm'de 50 sıra). |
 | **Düğüm ızgarası (grid)** | Çıktının piksel boyutu. 200×300 cm halı, 397×500 kalitede ≈ 794×1500 düğüm olur. |
 | **Palet** | Kullanılacak iplik renklerinin listesi. Çıktıda indeks 0 siyah ve boştur; iplikler 1'den başlar. |
-| **Kaynak görüntü** | Dönüştürülecek desen resmi (jpg/png): kare pikselli, düz renkli, en/boy oranı halınınkinden en çok %10 farklı, her iki yönde düğümden çok pikselli. |
+| **Kaynak görüntü** | Dönüştürülecek desen resmi (jpg/png): kare pikselli, düz renkli, en/boy oranı halınınkine yakın (bkz. `--stretch`), her iki yönde düğümden çok pikselli. |
 | **Kaynak ölçeği (scale)** | Her düğüme kaç kaynak pikseli düştüğü. Her iki yönde 1'den büyük olmalı. |
 
 ### Gerçek tezgâh referansı
@@ -238,7 +238,8 @@ Kurallar:
    aynalanınca tam halıyı verir. Eksen net değilse (ör. yalnızca sol/sağ
    simetrik bir desende `--parts 4`) o eksen için uyarı verilir ve ortadan
    kesilir. Farklı boydaki parça ana araca verilirken en/boy oranı halıyla
-   uyuşmayabilir; %10'a kadar fark esnetilerek geçilir, üstü hatadır.
+   uyuşmayabilir; varsayılan olarak boy resimden hesaplanır (bkz. bölüm 7),
+   `--stretch` ile %10'a kadar fark esnetilerek geçilir, üstü hatadır.
    Not: `--symmetric` yalnızca **eksenin yerini** bulur; iki yarı biraz
    farklı çizildiyse (motifler birebir aynı değilse) parçalar yine farklı
    olur. Bunu dönüştürme aşaması çözer (`--symmetry`, bkz. bölüm 8).
@@ -255,9 +256,13 @@ yoktur: Texcelle dosyası ya da düğüm ölçeğinde resim verilmez. Görüntü
 2. **Düz renkli olmalı.** Gölge, gradyan, kabartma (bevel), doku olmamalı.
    Gölgeli bir kaynak, kenarlarda aynı renk tonunun ince şeritlerini üretir;
    tek çözüm düz bir kaynaktır.
-3. **En/boy oranı halının cm oranına yakın olmalı.** 200×300 cm için 2:3. %10'a
-   kadar fark kabul edilir: görüntü düğüm ızgarasına esnetilir ve bozulma
-   yüzde olarak ekrana yazılır. %10'un üstü hatadır.
+3. **En/boy oranı halının cm oranına yakın olmalı.** 200×300 cm için 2:3.
+   Varsayılan olarak hiçbir şey esnetilmez: `--width` sabittir, boy resmin
+   oranından hesaplanır ve düğüm ızgarası buna göre büyür/küçülür; yeni ölçü
+   ve düğüm sayısı ekrana belirgin yazılır. Boy `--height`'tan %10'dan fazla
+   sapıyorsa hata verilir ve `--stretch` önerilir. `--stretch` verilirse
+   resim verilen cm ölçüsüne esnetilerek sığdırılır ve bozulma yüzde olarak
+   yazılır; %10'un üstü hatadır.
 4. **Her iki yönde düğümden çok pikseli olmalı.** Her düğüme 1'den fazla
    kaynak pikseli düşmeli. Kaynak daha kabaysa (örneğin 600×900) araç hata
    verir; deseni daha büyük üretin.
@@ -282,9 +287,14 @@ yoktur: Texcelle dosyası ya da düğüm ölçeğinde resim verilmez. Görüntü
 | `--reed N` | Yatayda metre başına düğüm (ör. 397). `--density` ile birlikte kullanılır. (TARAK SAYISI) |
 | `--density N` | Dikeyde metre başına sıra (ör. 500 = 10 cm'de 50 sıra). (ATKI SAYISI) |
 
+### Ölçü
+
+| Seçenek | Varsayılan | Açıklama |
+|---|---|---|
+| `--stretch` | kapalı | Verilen cm ölçüsüne sığdırır, deseni esnetir (en çok %10; üstü hata). Verilmezse hiçbir şey esnetilmez: `--width` sabit kalır, boy resmin oranından hesaplanır, düğüm ızgarası buna göre büyür; yeni ölçü ve düğüm sayısı ekrana belirgin yazılır (fom: `*** CARPET 200 x 313.2 cm, KNOT GRID 794 x 1566 ***`). Boy `--height`'tan %10'dan fazla sapıyorsa hata verilir ve `--stretch` önerilir. |
+
 Görüntü ile halı yönü farklıysa (biri yatay biri dikey) araç görüntüyü 90°
-döndürür. Görüntü oranı halının cm oranından en çok %10 farklı olabilir;
-fark esnetilerek geçilir ve ekrana yazılır (bkz. bölüm 7).
+döndürür. Oran kuralları için bkz. bölüm 7.
 
 ### Renk / palet
 
@@ -302,21 +312,115 @@ fark esnetilerek geçilir ve ekrana yazılır (bkz. bölüm 7).
 
 ### Simetri
 
+Geçerli değerler yalnızca `auto`, `none`, `lr`, `tb`, `both`'tur (`tl` gibi bir
+mod yoktur).
+
 | Seçenek | Varsayılan | Açıklama |
 |---|---|---|
-| `--symmetry auto` | auto | Görüntüden ayna eksenleri ölçülür (ortada olmayan eksen de bulunur). |
-| `--symmetry none` | | Simetri işlemleri kapalı. |
-| `--symmetry lr` | | Sol/sağ simetri zorlanır (ölçülen eksen yerinde). |
-| `--symmetry tb` | | Üst/alt simetri zorlanır. |
-| `--symmetry both` | | Her iki eksen zorlanır. |
+| `--symmetry auto` | auto | İki ekseni de (sol/sağ ve üst/alt) resimden ölçer, her birine ayrı karar verir: kontrastı 0,7'nin altında olan eksen alınır, üstündeki atlanır. Ortada olmayan eksen de bulunur. |
+| `--symmetry none` | | Simetri işlemi yok, ölçüm de yok. İki yarı ayrı ayrı oylanır. |
+| `--symmetry lr` | | Sol/sağ eksenini **mutlaka** alır (ölçülen yerinde; net değilse ortada). Üst/alt eksenine hiç bakmaz. |
+| `--symmetry tb` | | Üst/alt eksenini mutlaka alır. Sol/sağ eksenine hiç bakmaz. |
+| `--symmetry both` | | İki ekseni de mutlaka alır, her biri ölçülen yerinde. |
 
-Simetrik eksende sol/üst yarı sağ/alt yarıya kopyalanır; karşılıklı motifler
-birebir aynı olur. İki yarı her yerde eşleşiyorsa (gerçek tasarım, fom
-sol/sağ) oy adımında iki yarı birlikte karar verilir; yalnızca eksen yakınında
-eşleşiyorsa (fom üst/alt: madalyon aynı, taçlar farklı) yalnızca kopyalanır.
-Eksen ortada değilse resim eksen ortaya gelecek şekilde kırpılır; bu en/boy
-oranını değiştirir ve fark %10'un altında kaldığı sürece esnetilerek geçilir
-(fom: 3392×4800 olur, %6,0 bozulma).
+#### Bir eksen alındığında ne olur (her modda aynı)
+
+1. **Ölçüm** (`symmetry.measure_axis`, ayrıntı bölüm 10 adım 1): eksenin
+   yeri ve iki sayı bulunur. **Kontrast** (0 = kusursuz ayna, 1 = eksen yok)
+   eksenin var olup olmadığını, **eşleşme** iki yarının bütün resimde mi
+   yoksa yalnız eksen yakınında mı aynı olduğunu söyler.
+2. **Eksen ortada değilse yarı seçimi ve aynalama:** iki yarının boyu
+   farklıdır (fom: üstte 2400, altta 2656 satır). Biri seçilir ve aynası
+   öteki yarının yerine konur; eksen resmin ortasına gelir, hiçbir şey
+   kırpılmaz. `--stretch` verilmemişse büyük yarı seçilir (fom: alt yarı,
+   resim 3392×5312 olur, halı 200×313,2 cm); `--stretch` verilmişse
+   aynalanmış resmi halı oranına en yakın getiren yarı seçilir (fom: yine
+   alt yarı, %4,4 bozulma; üst yarı %6,0 verirdi, ekrana yazılır). Ortadaki
+   eksende resme dokunulmaz, iki yarının kanıtı korunur.
+3. **Oy adımında:** eşleşme 0,35'in altındaysa iki yarı her yerde aynıdır
+   (gerçek tasarım, fom sol/sağ 0,14); kaplama haritaları aynasıyla
+   ortalanır, iki yarı birlikte karar verilir (ekranda `average + copy`).
+   Üstündeyse yarılar yalnız eksen yakınında aynıdır (fom üst/alt 1,12:
+   madalyon aynı, taçlar farklı); ortalama yapılmaz, yoksa farklı çizilmiş
+   iki taç birbirine karışıp hayalet motif olur (ekranda `copy only`).
+4. **Temizlikten sonra:** seçilen yarı öteki yarıya düğüm düğüm kopyalanır
+   (`mirror_copy`). Karşılıklı motifler birebir aynı olur; kopyasız bir
+   çıktı kendi aynasıyla düğümlerin yalnız %93,8'inde tutuyordu.
+
+Ekran satırları tam bunu söyler (fom, `auto`):
+
+```
+symmetry: left/right axis at column 1695.5 (at the centre), contrast 0.12, halves match 0.14 -> average + copy
+symmetry: top/bottom axis at row 2399.5 (128 px above the centre), contrast 0.57, halves match 1.12 -> copy only
+symmetry: bottom half (2656 rows) kept and mirrored onto the top (2400 rows): image 3392x5312 (the larger half)
+```
+
+#### `auto` nasıl karar verir
+
+İki eksen ayrı ayrı ölçülür. Kontrast 0,7'nin altındaysa eksen alınır ve
+yukarıdaki adımlar işler; üstündeyse `symmetry: ... not symmetric (best axis
+..., contrast 0.8x > 0.7)` yazılır ve o eksen için **hiçbir şey yapılmaz**.
+Ölçülen değerler (2026-09-17): gerçek tasarım 0,00; WhatsApp taraması 0,16;
+fom sol/sağ 0,12 ve üst/alt 0,57 (ikisi de alınır); simetrisiz fom çeyrek
+görüntüleri 0,79–0,99 (ikisi de reddedilir). Yani fom'da `auto`, `both` gibi
+davranır; fark, buna resmin karar vermesidir.
+
+
+#
+Program her yön için ayrı ayrı şunu yapıyor:
+
+Resmi bir çizgiden ikiye katlıyor ve iki tarafın ne kadar farklı olduğuna bakıyor. Bu farka hata deniyor.
+Bunu birçok farklı çizgi için tekrar ediyor.
+En iyi çizgiyi (hatası en düşük olanı) buluyor.
+Bu çizginin hatasını, ondan uzaktaki çizgilerin en iyisinin hatasıyla karşılaştırıyor.
+Örnek
+
+Çizgi	Hata
+satır 2400 (en iyi)	10
+uzaktaki en iyi	100
+Kontrast = 10 / 100 = 0,1 → en iyi çizgi diğerlerinden çok daha iyi. Gerçek eksen var.
+
+Çizgi	Hata
+satır 2400 (en iyi)	90
+uzaktaki en iyi	100
+Kontrast = 90 / 100 = 0,9 → en iyi çizgi diğerlerinden pek farklı değil. Eksen yok.
+
+Özet
+
+Sol/sağ için dikey çizgiler denenir, üst/alt için yatay çizgiler. İki hesap birbirinden bağımsız.
+Kontrast küçükse simetri var, büyükse yok. Sınır 0,7.
+#
+
+#### Zorlama modları (`lr`, `tb`, `both`) `auto`'dan nasıl ayrılır
+
+- Eksen **reddedilmez**. Kontrast 0,7'nin altındaysa ölçülen yerinde
+  kullanılır, tıpkı `auto` gibi.
+- Kontrast 0,7'nin üstündeyse `warning: no clear left/right mirror axis
+  (contrast 0.8x > 0.7; best candidate ...); forced, using the centre`
+  uyarısı verilir ve eksen **ortada varsayılır** (rastgele bir yerden
+  aynalamak yerine). Bu durumda ortalama yapılmaz, yalnız kopyalanır.
+- Bakılmayan eksene hiç dokunulmaz: `lr` üst/alt eksenini, `tb` sol/sağ
+  eksenini ölçmez bile.
+
+#### fom'da modlar
+
+| Mod | Alınan eksen | Sonuç |
+|---|---|---|
+| `auto` | sol/sağ (ortada) + üst/alt (2399,5. satır) | iki yönde simetrik; `_10.bmp` (varsayılan), `_11.bmp` (`--stretch`) |
+| `both` | aynı | `auto` ile aynı (iki eksen de net) |
+| `lr` | yalnız sol/sağ | üst/alt'a dokunulmaz; `_12.bmp` = `_6.bmp` (`--stretch` ile) |
+| `tb` | yalnız üst/alt | sol ve sağ yarı birebir aynı olmaz |
+| `none` | yok | iki yarı ayrı oylanır, karşılıklı motifler düğüm düğüm farklı olabilir |
+
+#### Hangi durumda hangisi
+
+- Desenin **bir tarafında tek başına** bir motif varsa `none` ya da yalnız
+  doğru eksen (`lr` veya `tb`): kopyada o motif silinir.
+- Desen simetrik ama `auto` ekseni bulamıyorsa (kontrast eşiğin üstünde,
+  örneğin çok gürültülü bir tarama) `lr` / `tb` / `both` ile zorlayın.
+  Uyarı çıkarsa eksen ortadan varsayılmış demektir; resmin gerçekten
+  ortadan simetrik olduğundan emin olun.
+- Bunların dışında `auto` yeterlidir.
 
 ### Çıktı
 
@@ -356,7 +460,7 @@ Sütunlar: `indeks  R  G  B  #RRGGBB`. İndeks 0 listelenmez.
 Çalıştırma sırasında araç şunları yazar:
 
 - Düğüm ızgarası, düğüm boyutu (mm), düğüm başına kaynak pikseli, `min area`
-- Döndürme / kesme / simetri tespiti / oran bozulması bilgileri
+- Döndürme / simetri tespiti / seçilen ve aynalanan yarı / halı ölçüsü ve oran bozulması bilgileri
 - Kaç kenar karışım pikselinin ayrıştırıldığı
 - Kaç düğümün adacık temizliğinde yeniden boyandığı
 - Her ipliğin çıktıdaki yüzdesi
@@ -389,13 +493,26 @@ altı adım gerekir. Sıra önemlidir.
    bütün görüntünün hatası / 32 px kaydırma hatası (eski ölçüt): 0,35'in
    altındaysa iki yarı her yerde eşleşir (gerçek tasarım 0,00–0,02, fom
    sol/sağ 0,14), değilse yalnızca eksen yakınında (fom üst/alt 1,12).
-3. **Ekseni ortalama:** Eksen ortada değilse görüntü, eksen düğüm ızgarasının
-   tam ortasına gelecek şekilde kırpılır (fom: 3392×4800). Zorlanan bir eksen (`--symmetry lr/tb/both`) de ölçülen
-   yerinde kullanılır; net değilse uyarıyla ortada kalır.
-4. **Oran kontrolü:** Görüntü oranı halının cm oranından en çok %10 farklı
-   olabilir; üstü hatadır. Altında görüntü adım 4'te düğüm ızgarasına
-   esnetilir ve bozulma yüzde olarak yazılır (fom kırpmadan sonra %6,0,
-   kırpmasız %0,6).
+3. **Yarı seçimi ve aynalama** (`symmetry.mirror_halves`): Eksen ortada
+   değilse iki yarının boyu farklıdır (`half_sizes`; fom: üstte 2400, altta
+   2656 satır). Biri seçilir, aynası öteki yarının yerine konur
+   (`mirror_half`): eksen resmin ortasına gelir, hiçbir şey kırpılmaz ve bu
+   adımda esnetilmez. `--stretch` yoksa büyük yarı seçilir (fom: alt yarı,
+   3392×5312); `--stretch` varsa aynalanmış resmi halı oranına en yakın
+   getiren yarı (fom: yine alt yarı, %4,4; üst yarı %6,0 verirdi). Ortadaki
+   eksende resme dokunulmaz, iki yarının kanıtı korunur. Temizlikten sonra
+   `mirror_copy` seçilen yarıyı öteki yarıya kopyalar. Zorlanan bir eksen
+   (`--symmetry lr/tb/both`) de ölçülen yerinde kullanılır; net değilse
+   uyarıyla ortada kalır.
+4. **Halı ölçüsü** (`grid.fit_carpet`): `--stretch` yoksa hiçbir şey
+   esnetilmez: `--width` sabit, boy resmin oranından hesaplanır, düğüm
+   ızgarası buna göre büyür ve ekrana belirgin bir başlıkla yazılır (fom:
+   `*** CARPET 200 x 313.2 cm, KNOT GRID 794 x 1566 ***`, bozulma %0). Boy
+   `--height`'tan %10'dan fazla sapıyorsa hata verilir ve `--stretch`
+   önerilir. `--stretch` varsa verilen ölçü kullanılır, görüntü adım 4'te
+   düğüm ızgarasına esnetilir ve bozulma (`grid.distortion`: büyük ölçek
+   çarpanı / küçük − 1) yazılır; %10'un üstü hatadır (fom %4,4,
+   `--symmetry lr --stretch` %0,6).
 5. **Ölçek kontrolü:** Her iki yönde düğüm başına 1'den fazla kaynak pikseli
    düşmeli, yoksa hata.
 
@@ -510,11 +627,19 @@ Testler geçse bile asıl hatalar görsel ve sayısaldır.
 `data/fomggggggbro/fomggggggbro.jpg` (3392×5056, madalyon merkezden 128 px
 yukarıda) `--width 200 --height 300 --reed 397 --density 500 --palette
 <_6_palette.txt'deki renkler> --format bmp` ile çalıştırıldığında sol/sağ
-ekseni ortada, üst/alt ekseni 2399,5. satırda bulmalı, resmi 3392×4800'e
-kırpmalı, `6.0% distortion` yazmalı ve `fomggggggbro_3.bmp` ile piksel piksel
-aynı, iki yönde de simetrik bir çıktı vermelidir. Aynı komut `--symmetry lr`
-ile `0.6% distortion` yazmalı ve `fomggggggbro_6.bmp` ile piksel piksel aynı
-olmalıdır (2026-09-17 referansları).
+ekseni ortada, üst/alt ekseni 2399,5. satırda bulmalı, `bottom half (2656
+rows) kept and mirrored onto the top (2400 rows): image 3392x5312` ve
+`*** CARPET 200 x 313.2 cm, KNOT GRID 794 x 1566 ***` yazmalı ve
+`fomggggggbro_10.bmp` (794×1566) ile piksel piksel aynı, iki yönde de
+simetrik, taçlarda hayalet motifsiz bir çıktı vermelidir. Aynı komut
+`--stretch` ile yine alt yarıyı seçmeli (`4.4% distortion against 6.0% with
+the top half`), `4.4% distortion (--stretch)` yazmalı ve `fomggggggbro_11.bmp`
+(794×1500) ile aynı olmalıdır. `--symmetry lr --stretch` ile `0.6% distortion`
+yazmalı ve `fomggggggbro_6.bmp` = `fomggggggbro_12.bmp` ile piksel piksel
+aynı olmalıdır (yalnız sol/sağ simetrik; eksen ortada olduğu için resme
+dokunulmaz). Eski `fomggggggbro_3.bmp` kaldırılan kırpma mantığının
+(üst yarı, 3392×4800, %6,0) çıktısıdır, artık üretilmez (2026-09-17
+referansları).
 
 ### Başka bir kaynakta regresyon
 
@@ -532,7 +657,8 @@ Oy veya temizlik adımına dokunmadan önce eski çıktının bir kopyasını sa
 | `the following arguments are required: --reed, --density` | Izgara belirtilmedi. | `--reed 397 --density 500` ekleyin. |
 | `source image not found` | Dosya yolu yanlış. | Yolu kontrol edin. |
 | `... already exists; remove it or rename the source` | `data/<isim>/` içinde aynı adlı kaynak zaten var. | Dosyayı yeniden adlandırın veya `data/<isim>/` içindeki dosyayı doğrudan kaynak olarak verin. |
-| `image ratio ... is N% off the carpet ratio ...` | Görüntü oranı halının cm oranından %10'dan fazla farklı. | Kaynağı halının oranında üretin (200×300 cm için 2:3). |
+| `... gives a W x H cm carpet, N% off the requested ... height ...; use --stretch ...` | `--stretch` yok; resmin oranından çıkan boy `--height`'tan %10'dan fazla farklı. | Deseni esnetmek için `--stretch` ekleyin ya da resmin boyunu verin (mesajdaki `--height`). |
+| `fitting the image ... would distort it by N%, more than 10%` | `--stretch` verildi ama resim halı oranından %10'dan fazla uzak. | Halının gerçek ölçüsünü verin ya da kaynağı halının oranında üretin (200×300 cm için 2:3). |
 | `source ... is coarser than the knot grid` | Görüntü çok küçük: en az bir yönde düğüm başına 1 pikselden az. | Deseni daha büyük üretin. |
 | `bad palette color` | Palet hex değeri hatalı. | `#RRGGBB` biçimini kullanın, virgülle ayırın. |
 | `2 parts need --axis lr ... or tb` (split) | `--parts 2` verildi ama eksen yok. | `--axis lr` ya da `--axis tb` ekleyin. |
@@ -570,6 +696,10 @@ Oy veya temizlik adımına dokunmadan önce eski çıktının bir kopyasını sa
   (medyan filtre; 1 piksellik çizgileri kırar), `--fit crop` / `--fit stretch`,
   `--points`, `--no-rotate`, `--grid` ve oran kontrolündeki düğüm oranı
   kabulü: 2026-09-17'de kaldırıldı; yerini bölüm 7'deki kaynak kuralları aldı.
+- **Ortada olmayan ekseni kırparak ortalamak** (`crop_to_axis`): büyük
+  yarının bir kısmını atıyor ve oranı bozuyordu (fom 3392×4800, %6,0
+  esnetme). 2026-09-17'de yerini bir yarıyı seçip aynalamak
+  (`mirror_halves`) ve `--stretch` aldı.
 
 ---
 
@@ -582,8 +712,8 @@ img2texcelle/
   options.py    Options veri sınıfı (tüm ayarlar)
   workspace.py  data/<isim>/: kaynağı taşı, <isim>[_N].tiff/bmp + _palette.txt seç
   pipeline.py   convert(src, dst, opts): yukarıdaki 6 adım, ~100 satır
-  grid.py       düğüm ızgarası + başlık ppm, düğüm boyutu, döndürme, oran kontrolü (%10), ölçek kontrolü
-  symmetry.py   eksen ölçümü (measure_axis), eksen ortalama, ayna ortalaması ve kopyası
+  grid.py       düğüm ızgarası + başlık ppm, düğüm boyutu, döndürme, bozulma, halı ölçüsü (fit_carpet: --stretch / boy resimden, %10), ölçek kontrolü
+  symmetry.py   eksen ölçümü (measure_axis, find_axes), yarı seçimi ve aynalama (half_sizes, mirror_half, mirror_halves), ayna ortalaması ve kopyası
   color.py      rgb_to_lab, parse_palette, flat_mask, auto_palette (k-means), smooth_chroma
   unmix.py      unmix (iki renk kaplama oranları), blend_pairs, unmix_thin_blends
   vote.py       resize_alpha (BOX), directional_mean, straighten_runs, vote_knots
@@ -591,10 +721,10 @@ img2texcelle/
   output.py     save_indexed (TIFF/BMP, indeks 0 ayrılmış, dpi = ppm), write_palette_txt
   split.py      python -m img2texcelle.split: ayna ekseninden 2/4 parça -> data/cropped_images/<isim>/
 tests/
-  test_smoke.py      sentetik 2:3 desen uçtan uca; kaba kaynak, oran hatası ve %10 altı oran farkı testleri
+  test_smoke.py      sentetik 2:3 desen uçtan uca; kaba kaynak, --stretch / boy resimden, ortada olmayan eksen testleri
   test_workspace.py  data/<isim>/ klasör kuralları (taşıma, _2/_3 adlandırma, çakışma)
   test_split.py      bölme: kutular, eksendeki piksel, ortada olmayan eksen, --symmetric/--shift, --keep, klasör kuralı
-  test_symmetry.py   measure_axis: ortada / %20 kaymış / yalnızca eksen yakınında simetrik / simetrisiz; find_and_centre modları
+  test_symmetry.py   measure_axis: ortada / %20 kaymış / yalnızca eksen yakınında simetrik / simetrisiz; find_axes modları, yarı seçimi ve aynalama, mirror_copy yönleri
 ```
 
 Testleri çalıştırmak için:

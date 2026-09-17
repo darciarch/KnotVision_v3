@@ -16,13 +16,18 @@ def build_parser():
                     "(one palette entry per yarn, one pixel per knot). The image is moved "
                     "into data/<name>/ and the outputs are written next to it.")
     p.add_argument("src", help="design image (jpg/png): square pixels, flat colors, aspect "
-                               "ratio within 10%% of the carpet, more pixels than knots in "
-                               "both directions")
+                               "ratio near the carpet's (see --stretch), more pixels than "
+                               "knots in both directions")
     p.add_argument("--format", choices=sorted(FORMATS), default="tiff",
                    help="output format: tiff or bmp, both 8-bit indexed and uncompressed "
                         "(default tiff)")
     p.add_argument("--width", type=float, required=True, help="carpet width cm")
     p.add_argument("--height", type=float, required=True, help="carpet height cm")
+    p.add_argument("--stretch", action="store_true",
+                   help="fit the design into the given cm size by stretching it (up to 10%%). "
+                        "Without it nothing is stretched: --width is kept and the height "
+                        "follows the image ratio (the knot grid grows with it; more than "
+                        "10%% off --height is an error)")
     p.add_argument("--reed", type=float, required=True,
                    help="loom quality: horizontal points per meter (e.g. 397)")
     p.add_argument("--density", type=float, required=True,
@@ -53,7 +58,8 @@ def main(argv=None):
     opts = Options(
         width_cm=a.width, height_cm=a.height, reed=a.reed, density=a.density,
         colors=a.colors, palette=parse_palette(a.palette) if a.palette else None,
-        merge=a.merge, min_area=a.min_area, symmetry=a.symmetry, fmt=a.format,
+        merge=a.merge, min_area=a.min_area, symmetry=a.symmetry, stretch=a.stretch,
+        fmt=a.format,
         debug_dir=a.debug_dir)
     paths = prepare_run(a.src, a.format)
     try:

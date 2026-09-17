@@ -20,6 +20,9 @@ class Options:
     min_area: int | None = None  # knots; None = 20 mm^2 worth of knots
     # symmetry
     symmetry: str = "auto"       # auto / none / lr / tb / both
+    # size: fit the image into width x height by stretching it (up to 10%);
+    # otherwise the width is kept and the height follows the image ratio
+    stretch: bool = False
     # output
     fmt: str = "tiff"            # tiff / bmp
     debug_dir: str | None = None

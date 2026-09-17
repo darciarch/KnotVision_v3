@@ -2,7 +2,7 @@
 
 from PIL import Image
 
-MAX_ASPECT_OFF = 0.10  # image ratio may differ from the carpet ratio by this much
+MAX_ASPECT_OFF = 0.10  # --stretch: max distortion; without: max height deviation
 
 
 def compute_pixels(width_cm, height_cm, reed, density):
@@ -36,28 +36,51 @@ def rotate_to_carpet(img, width_cm, height_cm):
     return img
 
 
-def check_aspect(img, width_cm, height_cm, max_off=MAX_ASPECT_OFF):
-    """Check the image aspect ratio against the carpet's ratio in cm.
+def distortion(img_w, img_h, width_cm, height_cm):
+    """Anisotropic stretch when an image of img_w x img_h square pixels is
+    mapped onto width_cm x height_cm: the larger of the two scale factors
+    over the smaller, minus 1 (0 = the image has the carpet's ratio)."""
+    fx, fy = width_cm / img_w, height_cm / img_h
+    return max(fx, fy) / min(fx, fy) - 1.0
 
-    The image has square pixels, so its ratio should be the carpet's. A
-    difference up to `max_off` is accepted: the image is later resized onto
-    the knot grid (the area average in the vote), which distorts it by that
-    much, and the distortion is printed. A larger difference is an error.
-    Returns the image unchanged.
+
+def fit_carpet(img, width_cm, height_cm, stretch, max_off=MAX_ASPECT_OFF):
+    """The carpet size (width_cm, height_cm) the image is mapped onto.
+
+    With `stretch` it is the requested size: the image is area-averaged onto
+    that knot grid (the vote), which distorts it by the difference of the
+    two ratios; up to `max_off` is accepted and printed, more is an error.
+    Without `stretch` nothing is stretched: the width is kept and the height
+    follows the image ratio, so the knot grid grows or shrinks with the
+    image (fom's mirrored 3392x5312 gives 200 x 313.2 cm instead of 200 x
+    300); a height more than `max_off` off the requested one is an error
+    that points to --stretch. Returns (width_cm, height_cm, distortion).
     """
     img_ratio = img.width / img.height
     carpet_ratio = width_cm / height_cm
-    off = abs(img_ratio - carpet_ratio) / carpet_ratio
+    if stretch:
+        off = distortion(img.width, img.height, width_cm, height_cm)
+        if off > max_off:
+            raise SystemExit(
+                f"ERROR: fitting the image {img.width}x{img.height} (ratio {img_ratio:.3f}) into "
+                f"{width_cm:g} x {height_cm:g} cm (ratio {carpet_ratio:.3f}) would distort it by "
+                f"{100 * off:.1f}%, more than {100 * max_off:.0f}%; give the carpet's real "
+                f"size (at {width_cm:g} cm width the image is {width_cm / img_ratio:.1f} cm high) "
+                f"or a source with the carpet's ratio")
+        print(f"aspect: image {img.width}x{img.height} (ratio {img_ratio:.3f}) stretched onto "
+              f"{width_cm:g} x {height_cm:g} cm (ratio {carpet_ratio:.3f}): {100 * off:.1f}% "
+              f"distortion (--stretch)", flush=True)
+        return width_cm, height_cm, off
+    fitted = width_cm / img_ratio
+    off = abs(fitted - height_cm) / height_cm
     if off > max_off:
         raise SystemExit(
-            f"ERROR: image ratio {img_ratio:.3f} ({img.width}x{img.height}) is "
-            f"{100 * off:.1f}% off the carpet ratio {carpet_ratio:.3f} "
-            f"({width_cm:g} x {height_cm:g} cm); the image must have the carpet's aspect "
-            f"ratio within {100 * max_off:.0f}%")
-    print(f"aspect: image ratio {img_ratio:.3f} ({img.width}x{img.height}) vs carpet "
-          f"{carpet_ratio:.3f}, resized to the knot grid with {100 * off:.1f}% distortion",
-          flush=True)
-    return img
+            f"ERROR: at {width_cm:g} cm width the image {img.width}x{img.height} gives a "
+            f"{width_cm:g} x {fitted:.1f} cm carpet, {100 * off:.1f}% off the requested "
+            f"{height_cm:g} cm height (more than {100 * max_off:.0f}%); use --stretch to fit "
+            f"the design into {width_cm:g} x {height_cm:g} cm, or give the image's height "
+            f"(--height {fitted:.0f})")
+    return width_cm, fitted, 0.0
 
 
 def source_scale(img, px_w, px_h):
