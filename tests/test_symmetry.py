@@ -1,12 +1,16 @@
-"""symmetry.measure_axis / find_axes / mirror_halves: axes off centre, axis-only symmetry."""
+"""symmetry.measure_axis / find_axes / mirror_halves: axes off centre, axis-only
+symmetry; --piece: mirror_piece, centre_axes, the piece name under rotation."""
 
 import numpy as np
+import pytest
 from PIL import Image
 
-from img2texcelle.symmetry import (AXIS_CONTRAST, AXIS_CONTRAST_AUTO,
-                                   EXACT_MATCH, describe_axis, find_axes, half_sizes,
+from img2texcelle.grid import rotate_piece, rotate_to_carpet
+from img2texcelle.symmetry import (AXIS_CONTRAST, AXIS_CONTRAST_AUTO, EXACT_MATCH, PIECES,
+                                   centre_axes, describe_axis, find_axes, half_sizes,
                                    measure_axis, mirror_copy, mirror_error, mirror_half,
-                                   mirror_halves, mirrored_size, part_region)
+                                   mirror_halves, mirror_piece, mirrored_size, part_region,
+                                   piece_sides)
 
 from test_split import noisy_mirrored_image, off_centre_image
 
@@ -172,3 +176,63 @@ def test_describe_axis():
     assert describe_axis(0, 5056, -256) == "at row 2399.5 (128 px above the centre)"
     assert describe_axis(1, 3392, 0) == "at column 1695.5 (at the centre)"
     assert describe_axis(1, 10, 3) == "at column 6 (1.5 px right the centre)"
+
+
+def piece_box(piece, w, h):
+    """The (x0, y0, x1, y1) box a piece occupies in a w x h full image."""
+    x0, x1 = (0, w) if piece[-1] not in "lr" else ((0, w // 2) if piece[-1] == "l" else (w // 2, w))
+    y0, y1 = (0, h) if piece[0] not in "tb" else ((0, h // 2) if piece[0] == "t" else (h // 2, h))
+    return x0, y0, x1, y1
+
+
+@pytest.mark.parametrize("piece", PIECES)
+def test_mirror_piece_keeps_the_piece_and_mirrors_the_rest(piece):
+    rng = np.random.default_rng(1)
+    a = rng.integers(0, 256, (8, 6, 3), dtype=np.uint8)  # 6 x 8, nothing symmetric
+    full = np.asarray(mirror_piece(Image.fromarray(a), piece))
+    sides = piece_sides(piece)
+    assert full.shape == (16 if 0 in sides else 8, 12 if 1 in sides else 6, 3)
+    x0, y0, x1, y1 = piece_box(piece, full.shape[1], full.shape[0])
+    assert np.array_equal(full[y0:y1, x0:x1], a)  # the piece is where it was
+    assert np.array_equal(full, full[:, ::-1]) == (1 in sides)  # left/right mirror iff mirrored
+    assert np.array_equal(full, full[::-1]) == (0 in sides)
+    if 1 in sides:  # the edge column is doubled: the axis is on a pixel boundary
+        assert np.array_equal(full[:, 5], full[:, 6])
+
+
+def test_piece_sides_and_centre_axes():
+    assert piece_sides("t") == {0: "top"} and piece_sides("r") == {1: "right"}
+    assert piece_sides("br") == {1: "right", 0: "bottom"} and list(piece_sides("tl")) == [1, 0]
+    with pytest.raises(ValueError, match="unknown piece 'x'"):
+        piece_sides("x")
+    for piece in PIECES:
+        axes, sides = centre_axes((400, 600), piece)
+        assert sides == piece_sides(piece) and set(axes) == set(sides)
+        assert all(v == (0, False) for v in axes.values())  # centre, copy only
+    assert centre_axes((400, 600), "bl", average=True) == ({1: (0, True), 0: (0, True)},
+                                                           {1: "left", 0: "bottom"})
+    # mirror_halves takes the piece's side instead of choosing one
+    img = mirror_piece(noisy_mirrored_image(60, 40), "br")
+    axes, sides = centre_axes(img.size, "br")
+    out, sides = mirror_halves(img, axes, sides=sides)
+    assert sides == {1: "right", 0: "bottom"} and out.size == img.size
+    assert np.array_equal(np.asarray(out), np.asarray(img))
+
+
+@pytest.mark.parametrize("piece", PIECES)
+def test_rotate_piece_follows_rotate_to_carpet(piece):
+    """A 4x6 image is rotated for a 30x20 carpet (ROTATE_90: counter-
+    clockwise); the marked piece lands where `rotate_piece` says."""
+    a = np.zeros((6, 4), dtype=np.uint8)
+    x0, y0, x1, y1 = piece_box(piece, 4, 6)
+    a[y0:y1, x0:x1] = 1
+    r = np.asarray(rotate_to_carpet(Image.fromarray(a), 30, 20))
+    assert r.shape == (4, 6)
+    x0, y0, x1, y1 = piece_box(rotate_piece(piece), 6, 4)
+    expect = np.zeros((4, 6), dtype=np.uint8)
+    expect[y0:y1, x0:x1] = 1
+    assert np.array_equal(r, expect)
+    p = piece
+    for _ in range(4):
+        p = rotate_piece(p)
+    assert p == piece

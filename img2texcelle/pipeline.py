@@ -5,8 +5,10 @@ ratio (within 10%) and more pixels than knots in both directions, so every
 knot takes the yarn covering most of its area:
 
   1. rotate to the carpet orientation, find the mirror axes (also off
-     centre) and mirror one half onto the other so they are the centre, fit
-     the carpet size (--stretch: the given size, up to 10% distortion;
+     centre) and mirror one half onto the other so they are the centre
+     (--piece: the image is a half or quarter, mirrored into the full
+     image first, its axes at the centre, nothing measured), fit the
+     carpet size (--stretch: the given size, up to 10% distortion;
      otherwise the height follows the image), check that the source is
      finer than the knot grid, and choose the part to convert: the kept
      half of every copy-only axis plus a pad of reflected pixels beyond the
@@ -35,10 +37,11 @@ from PIL import Image
 from .cleanup import remove_islands
 from .color import auto_palette, flat_mask, hex_color, rgb_to_lab, smooth_chroma
 from .grid import (compute_pixels, default_min_area, fit_carpet, knot_size_mm,
-                   rotate_to_carpet, source_scale)
+                   rotate_piece, rotate_to_carpet, source_scale)
 from .options import Options
 from .output import palette_txt_path, save_debug_png, save_indexed, save_part, write_palette_txt
-from .symmetry import FLAGS, PAD_KNOTS, describe_axis, find_axes, mirror_copy, mirror_halves, part_region
+from .symmetry import (AXIS_NAMES, FLAGS, PAD_KNOTS, centre_axes, describe_axis, find_axes,
+                       mirror_copy, mirror_halves, mirror_piece, part_region)
 from .unmix import unmix, unmix_thin_blends
 from .vote import vote_knots
 
@@ -71,20 +74,42 @@ def convert(src, dst, opts: Options):
     (labels, palette): the knot map (H, W) with 0-based yarn indices (the
     part only with opts.part) and the uint8 (K, 3) yarn colors."""
     # 1. geometry: orientation, mirror symmetry, carpet size, source scale, part
+    piece = opts.piece
+    if piece and opts.symmetry != "auto":
+        raise ValueError(f"piece {piece!r} fixes the mirror axes; symmetry must stay 'auto'")
     img = Image.open(src).convert("RGB")
+    if piece:
+        piece_size = img.size
+        img = mirror_piece(img, piece)  # the rotation is decided on the full image
     size0 = img.size
     img = rotate_to_carpet(img, opts.width_cm, opts.height_cm)
     rotated = img.size != size0
     measured = img.size  # the axes are described in this image
-    axes = find_axes(img, opts.symmetry, opts.average)
-    img, sides = mirror_halves(img, axes, (opts.width_cm, opts.height_cm) if opts.stretch else None)
-    width_cm, height_cm, off = fit_carpet(img, opts.width_cm, opts.height_cm, opts.stretch)
+    stretch_to = (opts.width_cm, opts.height_cm) if opts.stretch else None
+    label = None
+    if piece:
+        given, piece = piece, rotate_piece(piece) if rotated else piece
+        axes, sides = centre_axes(img.size, piece)
+        label = f"piece {piece} {piece_size[0]}x{piece_size[1]} mirrored to {size0[0]}x{size0[1]}"
+        which = "both axes" if len(axes) == 2 else f"{AXIS_NAMES[next(iter(axes))]} axis"
+        print(f"piece {piece}: image {piece_size[0]}x{piece_size[1]} mirrored to {size0[0]}x"
+              f"{size0[1]}, {which} at the centre, copy only"
+              + (f" (rotated 90 deg to {img.width}x{img.height}, piece {given} -> {piece})"
+                 if rotated else ""), flush=True)
+        if rotated:
+            label += f", rotated to {img.width}x{img.height}"
+        img, sides = mirror_halves(img, axes, stretch_to, sides)
+    else:
+        axes = find_axes(img, opts.symmetry, opts.average)
+        img, sides = mirror_halves(img, axes, stretch_to)
+    width_cm, height_cm, off = fit_carpet(img, opts.width_cm, opts.height_cm, opts.stretch, label=label)
     px_w, px_h, ppm_x, ppm_y = compute_pixels(width_cm, height_cm, opts.reed, opts.density)
     if abs(height_cm - opts.height_cm) >= 0.05:
         taller = "taller" if height_cm > opts.height_cm else "shorter"
         print(f"\n*** CARPET {width_cm:g} x {height_cm:.1f} cm, KNOT GRID {px_w} x {px_h} ***\n"
               f"    (requested {opts.width_cm:g} x {opts.height_cm:g} cm: the height follows the "
-              f"image {img.width}x{img.height}, {100 * abs(height_cm - opts.height_cm) / opts.height_cm:.1f}% "
+              f"image {label or f'{img.width}x{img.height}'}, "
+              f"{100 * abs(height_cm - opts.height_cm) / opts.height_cm:.1f}% "
               f"{taller}, nothing stretched; --stretch fits {opts.height_cm:g} cm)\n", flush=True)
     knot_w_mm, knot_h_mm = knot_size_mm(width_cm, height_cm, px_w, px_h)
     min_area = opts.min_area
@@ -168,6 +193,8 @@ def convert(src, dst, opts: Options):
                      for ax, (shift, avg) in axes.items()},
             "palette": [hex_color(c) for c in palette.tolist()],
         }
+        if piece:
+            info["piece"] = piece  # for the record (after the rotation); assemble does not use it
         save_part(labels, palette, dst, info)
         print(f"{dst}: part {pw} x {ph} px at ({part[0]}, {part[1]}) of {px_w} x {px_h}, {n} colors "
               f"(indices 1-{n}, 0 unused); finish with: python -m img2texcelle.assemble {dst}")

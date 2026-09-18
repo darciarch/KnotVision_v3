@@ -38,6 +38,41 @@ EXACT_MATCH = 0.35          # measure_axis match below which the halves match ev
 PAD_KNOTS = 20              # knots processed beyond a copy-only axis (see `part_region`)
 AXIS_NAMES = {1: "left/right", 0: "top/bottom"}
 FLAGS = {1: "lr", 0: "tb"}
+PIECES = ("t", "b", "l", "r", "tl", "tr", "bl", "br")  # --piece names, in the image's orientation
+_PIECE_SIDES = {"t": (0, "top"), "b": (0, "bottom"), "l": (1, "left"), "r": (1, "right")}
+
+
+def piece_sides(piece):
+    """{axis: side} of a --piece name: the axis (axes) it is mirrored on and
+    the side it lies on ('t' -> {0: 'top'}, 'br' -> {1: 'right', 0: 'bottom'})."""
+    if piece not in PIECES:
+        raise ValueError(f"unknown piece {piece!r}; one of {', '.join(PIECES)}")
+    sides = dict(_PIECE_SIDES[c] for c in piece)
+    return {ax: sides[ax] for ax in (1, 0) if ax in sides}
+
+
+def mirror_piece(img, piece):
+    """The full image of a mirror-symmetric design from its `piece` (see
+    `piece_sides`): the piece stays at its own position and is reflected
+    across the axis (axes) it is mirrored on, so a half becomes 2w x h or
+    w x 2h and a quarter 2w x 2h. The edge row/column on the axis is
+    doubled: the axis lies on a pixel boundary, at the exact centre."""
+    a = np.asarray(img)
+    for ax, side in piece_sides(piece).items():
+        flipped = np.flip(a, ax)
+        a = np.concatenate([a, flipped] if side in ("left", "top") else [flipped, a], ax)
+    return Image.fromarray(np.ascontiguousarray(a))
+
+
+def centre_axes(size, piece, average=False):
+    """The axes of a --piece run without any measurement: `find_axes`'
+    structure {axis: (0, average)} for the mirrored axis (axes) of `piece`,
+    at the centre of the `size` = (w, h) full image (`mirror_piece`), plus
+    `mirror_halves`' sides = the piece's own side. Copy-only unless
+    `average` (there is no second half to average with: the other half is
+    the reflection). Returns (axes, sides)."""
+    sides = piece_sides(piece)
+    return {ax: (0, bool(average)) for ax in sides}, sides
 
 
 def _grey(img, factor):
@@ -214,7 +249,7 @@ def find_axes(img, mode="auto", average=True):
     return taken
 
 
-def mirror_halves(img, axes, stretch_to=None):
+def mirror_halves(img, axes, stretch_to=None, sides=None):
     """Make every taken axis the image centre by keeping one half and
     replacing the other with its mirror (`mirror_half`); an averaged axis
     already at the centre leaves the image alone (both halves keep their
@@ -228,9 +263,10 @@ def mirror_halves(img, axes, stretch_to=None):
     `stretch_to` = (width_cm, height_cm) the halves whose mirrored image is
     closest to the carpet ratio are kept (fom: the bottom half, 4.4%
     distortion, against 6.0% for the top half); the image is then stretched
-    onto the knot grid. Returns (img, sides) with sides = {axis: 'left' /
-    'right' / 'top' / 'bottom'} for every taken axis, the half `mirror_copy`
-    copies from."""
+    onto the knot grid. A given `sides` (--piece: `centre_axes`) skips that
+    choice. Returns (img, sides) with sides = {axis: 'left' / 'right' /
+    'top' / 'bottom'} for every taken axis, the half `mirror_copy` copies
+    from."""
     w, h = img.size
     choices = {}  # axis -> {side: mirrored size}
     for ax, (shift, _) in axes.items():
@@ -241,7 +277,9 @@ def mirror_halves(img, axes, stretch_to=None):
         return (choices[1][sides[1]] if 1 in sides else w,
                 choices[0][sides[0]] if 0 in sides else h)
 
-    if stretch_to is None:
+    if sides is not None:
+        sides = {ax: sides[ax] for ax in choices}
+    elif stretch_to is None:
         sides = {ax: max(c, key=c.get) for ax, c in choices.items()}  # ties -> left/top
     else:
         combos = [dict(zip(choices, names)) for names in itertools.product(*choices.values())]

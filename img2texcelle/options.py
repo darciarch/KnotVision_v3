@@ -21,6 +21,10 @@ class Options:
     # symmetry
     symmetry: str = "auto"       # auto / none / lr / tb / both
     average: bool = True         # False (--no-average): decide every axis from the kept half only
+    piece: str | None = None     # the image is this half/quarter (t/b/l/r/tl/tr/bl/br, in its own
+                                 # orientation) of a mirror-symmetric design: mirrored into the
+                                 # full image, its axis (axes) at the centre, copy-only; `symmetry`
+                                 # must stay "auto"
     pad: int | None = None       # knots converted beyond a copy-only axis; None = symmetry.PAD_KNOTS
     # size: fit the image into width x height by stretching it (up to 10%);
     # otherwise the width is kept and the height follows the image ratio

@@ -169,6 +169,10 @@ ile düğümlerin dörtte birinden fazlası yanlış ipliğe gider.
 
 Bir çalıştırma 3392×5056'lık bir kaynak için yaklaşık **4 dakika**, 1700×2500'lük
 bir kaynak için yaklaşık **60 saniye** sürer.
+`--piece` ile süre parçanın piksel sayısını izler: fom'un 1696×2656'lık
+sol/alt çeyreği `--piece bl` ile 44 s, 3392×2656'lık alt yarısı `--piece b`
+ile 97 s; tam resmin piksel sayısında çizilmiş bir çeyrek (3392×5312) ~4×
+sürer (201 s).
 
 ---
 
@@ -243,6 +247,13 @@ Kurallar:
    Not: `--symmetric` yalnızca **eksenin yerini** bulur; iki yarı biraz
    farklı çizildiyse (motifler birebir aynı değilse) parçalar yine farklı
    olur. Bunu dönüştürme aşaması çözer (`--symmetry`, bkz. bölüm 8).
+6. Bölünen parça ana araca `--piece` ile verilebilir (bkz. bölüm 8,
+   "Simetri"): `--parts 2 --axis tb` çıktısı `--piece t` / `b`, `--parts 4`
+   çıktısı `--piece tl` / `tr` / `bl` / `br`. Ortada olmayan eksende
+   `--symmetric` (ya da `--shift`) ile kesilen parça doğru parçadır. Tek
+   sayılı kenarda orta satır/sütun iki parçaya da girer, `--piece` ise
+   kenar satırını ikiler; bu yüzden aynalanan tam resim orijinalden 1 px
+   büyük olur.
 
 ---
 
@@ -323,6 +334,7 @@ mod yoktur).
 | `--symmetry tb` | | Üst/alt eksenini mutlaka alır (aynı 0,9 sınırı). Sol/sağ eksenine hiç bakmaz. |
 | `--symmetry both` | | İki ekseni de mutlaka alır, her biri ölçülen yerinde (0,9 sınırı). fom bununla çalıştırılır. |
 | `--no-average` | kapalı | Hiçbir eksende iki yarı birlikte oylanmaz; her eksen yalnız tutulan yarıdan karar verilir. Daha hızlı (fom'da ızgaranın %27'si dönüştürülür, %51 yerine) ama çıktı değişir (fom'da düğümlerin %6,4'ü, gerçek tasarımda %0,5'i). |
+| `--piece t/b/l/r/tl/tr/bl/br` | yok | Resim, ayna simetrik bir halının adı verilen **parçası**dır: `t`/`b` üst/alt yarı (üst/alt ekseninde aynalanır), `l`/`r` sol/sağ yarı (sol/sağ ekseninde aynalanır), `tl`/`tr`/`bl`/`br` çeyrek (iki eksende). Parça adı resmin **kendi yönüne** göredir (resim döndürülmüş verilmez; halı yönü farklıysa tam resim döndürülür ve ad eşlenir, ekrana `piece t -> l` yazılır). `--width`/`--height` yine **tam halının** cm'sidir; parçanın en/boy oranı o parçanın cm oranı olmalıdır: 200×300 halının üst yarısı 200×150 → 4:3, sol yarısı 100×300 → 1:3, çeyreği 100×150 → 2:3. Aynalama tam halı oranını geri verir, oran kontrolü tam resim üzerinde yapılır; ilmek ızgarası değişmez. Hiçbir şey ölçülmez: eksen(ler) tam merkezdedir, copy only, tutulan taraf parçanın tarafıdır; `--no-average` kendiliğinden geçerlidir. Aynalanmayan eksen ölçülmez ve kullanılmaz: iki yönde simetrik bir halıda yarı verilirse ızgaranın %51'i dönüştürülür, çeyrek verilirse %27'si (çeyrek verin). `auto` dışında bir `--symmetry` ile birlikte hatadır. |
 
 Bir eksen alındığında **yalnız tutulan parça** dönüştürülür: kopyalanan
 eksende tutulan yarı artı eksenin ötesinde 20 düğümlük bir pay (payın
@@ -536,6 +548,27 @@ altı adım gerekir. Sıra önemlidir.
 kaybolur. Böyle bir durumda `--symmetry none` ya da yalnızca doğru ekseni
 (`--symmetry lr` / `tb`) verin.
 
+**`--piece` ile sıra** (parça verildiğinde): önce `symmetry.mirror_piece`
+parçayı kendi konumunda tutup eksen(ler)inde yansıtarak tam resmi üretir
+(kenar satırı/sütunu ikilenir, eksen tam piksel sınırında, tam merkezde;
+yarı → 2w×h ya da w×2h, çeyrek → 2w×2h), döndürme kararı bu tam resim
+üzerinde verilir; sonra `rotate_to_carpet`; döndürme olduysa parça adı
+`grid.rotate_piece` ile eşlenir (PIL `ROTATE_90` saat yönünün tersidir,
+üst kenar sol kenar olur: t→l→b→r→t, tl→bl→br→tr→tl; ekrana `rotated 90
+deg to 600x400, piece t -> l` yazılır); sonra `find_axes` yerine
+`symmetry.centre_axes`: aynalanan eksen(ler) merkezde, copy only, ölçüm
+yok, tutulan taraf parçanın tarafı (`mirror_halves` tarafı seçmek yerine
+`sides` argümanıyla alır); gerisi aynıdır (`mirror_half` simetrik resimde
+etkisizdir, `fit_carpet`, ölçek kontrolü, `part_region`, `mirror_copy`).
+Konsol satırı: `piece br: image 1696x2656 mirrored to 3392x5312, both axes
+at the centre, copy only` / `piece t: image 400x300 mirrored to 400x600,
+top/bottom axis at the centre, copy only`; boy hatası ve CARPET başlığı
+parça boyutunu ve tam resim boyutunu birlikte yazar. Ölçek kaynağa
+bağlıdır: parça tam resimle aynı piksel sayısında üretildiyse aynalanan
+yönde ölçek 2× olur (fom: sx 4,27 → 8,5, sy 3,39), anizotropi artar ve
+`reach = ceil(sqrt(sx*sy))` o yönde ~1,4× kısa kalır; bu kabul edilen
+davranıştır, çıktı yine simetriktir.
+
 ### Adım 2 – Palet (`color.py`)
 
 `--palette` verildiyse doğrudan kullanılır.
@@ -664,6 +697,27 @@ dokunulmaz). Eski `fomggggggbro_3.bmp` kaldırılan kırpma mantığının
 (üst yarı, 3392×4800, %6,0) çıktısıdır, artık üretilmez (2026-09-17
 referansları).
 
+### `--piece` (2026-09-17)
+
+`data/cropped_images/fomggggggbro/fomggggggbro_bl.png` (1696×2656, gerçek
+eksenlerde `--shift 0,-256` ile kesilmiş sol/alt çeyrek) `--width 200
+--height 300 --reed 397 --density 500 --palette <_14_palette.txt'deki
+renkler> --format bmp --piece bl` ile `piece bl: image 1696x2656 mirrored
+to 3392x5312, both axes at the centre, copy only`, `*** CARPET 200 x 313.2
+cm, KNOT GRID 794 x 1566 ***` ve `converting 417 x 803 knots = 27% of the
+grid` yazmalı ve `fomggggggbro_14.bmp` ile piksel piksel aynı olmalıdır
+(aynalanan tam resim, `--symmetry both --no-average` koşusunun içeride
+kurduğu resmin ta kendisidir: sol ve alt yarı tutulur). Ölçüldü (2026-09-17): bu koşu 44 s (ızgaranın %27'si, tam resmin piksel yoğunluğunda: `--symmetry both --no-average` ile aynı, aynı oturumda 49 s); alt yarı `fomggggggbro_bottom_3.png` (3392×2656) `--piece b` ile 97 s (%51, yalnız üst/alt simetrik; sol/sağ ekseni kullanılmadığı için düğümlerin %5,9'u `_14`'ten farklı); çeyrek NEAREST ile 2× büyütülüp 3392×5312 yapıldığında (tam resmin piksel sayısında bir parça: düğüm başına 8,54 × 6,78 kaynak px) 201 s ve düğümlerin %2,9'u `_14`'ten farklı (yine iki yönde simetrik): süre piksel sayısını izler, ~4× piksel × %27 ≈ tam resim.
+Testlerde sentetik desenin üst yarısı / sol-üst çeyreği `--piece t` / `tl`
+ile, aynalanmış tam resmin `--symmetry tb` / `both --no-average` koşusuyla
+piksel piksel aynıdır (`find_axes` merkezdeki beraberlikte üst/sol yarıyı
+tutar, parçayla aynı taraf); öteki taraflar (b, br) yalnız simetri ve JSON'daki
+tutulan taraf için sınanır; 30×20 halı için üst yarı döndürülür ve `piece l`
+olur; pay kuralı (`pad=5000`'e karşı varsayılan) tl çeyreğinde kırpılmış ve
+2× büyütülmüş halde 0 fark verir. Dikkat: komut satırından
+`data/cropped_images/` içindeki bir dosya verilirse `prepare_run` onu
+`data/<isim>/` içine **taşır**; taşınmasın isteniyorsa önce kopyalayın.
+
 ### Gerçek tasarımda regresyon
 
 `data/roundtrip/003_200X300_397X50_X_sample/003_200X300_397X50_X_render.jpg`
@@ -689,6 +743,8 @@ temizlik adımına dokunmadan önce eski çıktının bir kopyasını saklayın.
 | `source ... is coarser than the knot grid` | Görüntü çok küçük: en az bir yönde düğüm başına 1 pikselden az. | Deseni daha büyük üretin. |
 | `bad palette color` | Palet hex değeri hatalı. | `#RRGGBB` biçimini kullanın, virgülle ayırın. |
 | `2 parts need --axis lr ... or tb` (split) | `--parts 2` verildi ama eksen yok. | `--axis lr` ya da `--axis tb` ekleyin. |
+| `--piece X already fixes the mirror axes; drop --symmetry Y` | `--piece` ile `auto` dışında bir `--symmetry` verildi. | `--symmetry`'yi kaldırın; parça eksenleri zaten belirler. |
+| `at W cm width the image piece t AxB mirrored to CxD gives ...` | Parçanın oranı o parçanın cm oranı değil (aynalanan tam resim halı oranından %10'dan fazla uzak). | Parçayı doğru oranda üretin (200×300'ün üst yarısı 4:3, çeyreği 2:3) ya da `--stretch`. |
 | `unknown part(s) ...; valid: ...` (split) | `--keep` içinde o modda olmayan bir parça adı var. | 2 parçada `left,right` / `top,bottom`, 4 parçada `tl,tr,bl,br` kullanın. |
 | `warning: odd width ...` (split) | Resmin eni/boyu tek sayı. | Hata değil: orta piksel iki parçaya da girer. Tam yarı isteniyorsa resmi çift boyuta getirin. |
 | Üst bordür tırtıklı | Kenar bir düğüm sırasının ortasından geçiyor. | Normalde `straighten_runs` çözer; tekrar oluşursa kaynağın düğüm ızgarasından yeterince ince olduğundan emin olun. |
@@ -739,8 +795,8 @@ img2texcelle/
   options.py    Options veri sınıfı (tüm ayarlar)
   workspace.py  data/<isim>/: kaynağı taşı, <isim>[_N].tiff/bmp + _palette.txt seç
   pipeline.py   convert(src, dst, opts): yukarıdaki 6 adım, ~100 satır
-  grid.py       düğüm ızgarası + başlık ppm, düğüm boyutu, döndürme, bozulma, halı ölçüsü (fit_carpet: --stretch / boy resimden, %10), ölçek kontrolü
-  symmetry.py   eksen ölçümü (measure_axis, find_axes), yarı seçimi ve aynalama (half_sizes, mirror_half, mirror_halves), ayna ortalaması ve kopyası
+  grid.py       düğüm ızgarası + başlık ppm, düğüm boyutu, döndürme (rotate_to_carpet, rotate_piece: --piece adının 90° sonrası karşılığı), bozulma, halı ölçüsü (fit_carpet: --stretch / boy resimden, %10), ölçek kontrolü
+  symmetry.py   eksen ölçümü (measure_axis, find_axes), --piece (piece_sides, mirror_piece, centre_axes), yarı seçimi ve aynalama (half_sizes, mirror_half, mirror_halves), ayna ortalaması ve kopyası
   color.py      rgb_to_lab, parse_palette, flat_mask, auto_palette (k-means), smooth_chroma
   unmix.py      unmix (iki renk kaplama oranları), blend_pairs, unmix_thin_blends
   vote.py       resize_alpha (BOX), directional_mean, straighten_runs, vote_knots
@@ -748,10 +804,10 @@ img2texcelle/
   output.py     save_indexed (TIFF/BMP, indeks 0 ayrılmış, dpi = ppm), write_palette_txt
   split.py      python -m img2texcelle.split: ayna ekseninden 2/4 parça -> data/cropped_images/<isim>/
 tests/
-  test_smoke.py      sentetik 2:3 desen uçtan uca; kaba kaynak, --stretch / boy resimden, ortada olmayan eksen testleri
+  test_smoke.py      sentetik 2:3 desen uçtan uca; kaba kaynak, --stretch / boy resimden, ortada olmayan eksen, --part + assemble, --piece (yarı/çeyrek = aynalanmış tam koşu, öteki taraf, döndürme, pay kuralı, --symmetry çakışması)
   test_workspace.py  data/<isim>/ klasör kuralları (taşıma, _2/_3 adlandırma, çakışma)
   test_split.py      bölme: kutular, eksendeki piksel, ortada olmayan eksen, --symmetric/--shift, --keep, klasör kuralı
-  test_symmetry.py   measure_axis: ortada / %20 kaymış / yalnızca eksen yakınında simetrik / simetrisiz; find_axes modları, yarı seçimi ve aynalama, mirror_copy yönleri
+  test_symmetry.py   measure_axis: ortada / %20 kaymış / yalnızca eksen yakınında simetrik / simetrisiz; find_axes modları, yarı seçimi ve aynalama, mirror_copy yönleri; mirror_piece / centre_axes / rotate_piece 8 parça için
 ```
 
 Testleri çalıştırmak için:

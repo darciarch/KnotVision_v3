@@ -28,12 +28,25 @@ def default_min_area(knot_w_mm, knot_h_mm, mm2=20.0):
 
 
 def rotate_to_carpet(img, width_cm, height_cm):
-    """Rotate the image 90 deg when its orientation differs from the carpet's."""
+    """Rotate the image 90 deg when its orientation differs from the carpet's
+    (ROTATE_90 turns counter-clockwise: the top edge becomes the left edge)."""
     if img.width != img.height and width_cm != height_cm \
             and (img.width > img.height) != (width_cm > height_cm):
         img = img.transpose(Image.Transpose.ROTATE_90)
         print("image rotated 90 deg to match carpet orientation", flush=True)
     return img
+
+
+# where a --piece of the image lies after `rotate_to_carpet` (counter-clockwise:
+# top -> left -> bottom -> right, top-left -> bottom-left -> bottom-right -> top-right)
+ROTATED_PIECE = {"t": "l", "l": "b", "b": "r", "r": "t",
+                 "tl": "bl", "bl": "br", "br": "tr", "tr": "tl"}
+
+
+def rotate_piece(piece):
+    """The name of `piece` (t/b/l/r/tl/tr/bl/br, in the unrotated image)
+    after `rotate_to_carpet` turned the image 90 deg."""
+    return ROTATED_PIECE[piece]
 
 
 def distortion(img_w, img_h, width_cm, height_cm):
@@ -44,7 +57,7 @@ def distortion(img_w, img_h, width_cm, height_cm):
     return max(fx, fy) / min(fx, fy) - 1.0
 
 
-def fit_carpet(img, width_cm, height_cm, stretch, max_off=MAX_ASPECT_OFF):
+def fit_carpet(img, width_cm, height_cm, stretch, max_off=MAX_ASPECT_OFF, label=None):
     """The carpet size (width_cm, height_cm) the image is mapped onto.
 
     With `stretch` it is the requested size: the image is area-averaged onto
@@ -54,20 +67,23 @@ def fit_carpet(img, width_cm, height_cm, stretch, max_off=MAX_ASPECT_OFF):
     follows the image ratio, so the knot grid grows or shrinks with the
     image (fom's mirrored 3392x5312 gives 200 x 313.2 cm instead of 200 x
     300); a height more than `max_off` off the requested one is an error
-    that points to --stretch. Returns (width_cm, height_cm, distortion).
+    that points to --stretch. `label` names the image in the messages
+    instead of its size (--piece: 'piece t 400x300 mirrored to 400x600').
+    Returns (width_cm, height_cm, distortion).
     """
+    label = label or f"{img.width}x{img.height}"
     img_ratio = img.width / img.height
     carpet_ratio = width_cm / height_cm
     if stretch:
         off = distortion(img.width, img.height, width_cm, height_cm)
         if off > max_off:
             raise SystemExit(
-                f"ERROR: fitting the image {img.width}x{img.height} (ratio {img_ratio:.3f}) into "
+                f"ERROR: fitting the image {label} (ratio {img_ratio:.3f}) into "
                 f"{width_cm:g} x {height_cm:g} cm (ratio {carpet_ratio:.3f}) would distort it by "
                 f"{100 * off:.1f}%, more than {100 * max_off:.0f}%; give the carpet's real "
                 f"size (at {width_cm:g} cm width the image is {width_cm / img_ratio:.1f} cm high) "
                 f"or a source with the carpet's ratio")
-        print(f"aspect: image {img.width}x{img.height} (ratio {img_ratio:.3f}) stretched onto "
+        print(f"aspect: image {label} (ratio {img_ratio:.3f}) stretched onto "
               f"{width_cm:g} x {height_cm:g} cm (ratio {carpet_ratio:.3f}): {100 * off:.1f}% "
               f"distortion (--stretch)", flush=True)
         return width_cm, height_cm, off
@@ -75,7 +91,7 @@ def fit_carpet(img, width_cm, height_cm, stretch, max_off=MAX_ASPECT_OFF):
     off = abs(fitted - height_cm) / height_cm
     if off > max_off:
         raise SystemExit(
-            f"ERROR: at {width_cm:g} cm width the image {img.width}x{img.height} gives a "
+            f"ERROR: at {width_cm:g} cm width the image {label} gives a "
             f"{width_cm:g} x {fitted:.1f} cm carpet, {100 * off:.1f}% off the requested "
             f"{height_cm:g} cm height (more than {100 * max_off:.0f}%); use --stretch to fit "
             f"the design into {width_cm:g} x {height_cm:g} cm, or give the image's height "

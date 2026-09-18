@@ -6,6 +6,7 @@ from .color import parse_palette
 from .options import Options
 from .output import FORMATS
 from .pipeline import convert
+from .symmetry import PIECES
 from .workspace import discard_run, finish_run, prepare_run
 
 
@@ -18,7 +19,7 @@ def build_parser():
     p.add_argument("src", help="design image (jpg/png): square pixels, flat colors, aspect "
                                "ratio near the carpet's (see --stretch), more pixels than "
                                "knots in both directions")
-    p.add_argument("--format", choices=sorted(FORMATS), default="tiff",
+    p.add_argument("--format", choices=sorted(FORMATS), default="bmp",
                    help="output format: tiff or bmp, both 8-bit indexed and uncompressed "
                         "(default tiff)")
     p.add_argument("--width", type=float, required=True, help="carpet width cm")
@@ -52,6 +53,14 @@ def build_parser():
                    help="decide every symmetric axis from its kept half only, never from both "
                         "halves together (faster; halves that match everywhere are averaged "
                         "by default)")
+    p.add_argument("--piece", choices=list(PIECES), default=None,
+                   help="the image is this piece of a mirror-symmetric carpet, named in the "
+                        "image's own orientation: t/b = top/bottom half, l/r = left/right half "
+                        "(mirrored on that axis), tl/tr/bl/br = a quarter (mirrored on both). "
+                        "--width/--height are still the whole carpet's cm and the piece must "
+                        "have the piece's ratio (the top half of 200x300 is 4:3, a quarter "
+                        "2:3). The other axis is not measured or used; --no-average is implied; "
+                        "not combined with --symmetry")
     p.add_argument("--part", action="store_true",
                    help="write the kept part only, as <name>_part.png + <name>_part.json "
                         "(no mirroring, no TIFF/BMP); edit it and finish with "
@@ -64,11 +73,13 @@ def build_parser():
 def main(argv=None):
     p = build_parser()
     a = p.parse_args(argv)
+    if a.piece and a.symmetry != "auto":
+        p.error(f"--piece {a.piece} already fixes the mirror axes; drop --symmetry {a.symmetry}")
     opts = Options(
         width_cm=a.width, height_cm=a.height, reed=a.reed, density=a.density,
         colors=a.colors, palette=parse_palette(a.palette) if a.palette else None,
         merge=a.merge, min_area=a.min_area, symmetry=a.symmetry, average=a.average,
-        stretch=a.stretch, fmt=a.format, part=a.part, debug_dir=a.debug_dir)
+        piece=a.piece, stretch=a.stretch, fmt=a.format, part=a.part, debug_dir=a.debug_dir)
     paths = prepare_run(a.src, "part" if a.part else a.format)
     try:
         convert(str(paths.source), str(paths.image), opts)
